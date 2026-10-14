@@ -95,9 +95,9 @@ code { font-size: 12px; padding: 1px 5px; border-radius: 4px; background: var(--
 }
 .brand-tag {
   font: 700 10px/1 Inter, system-ui, sans-serif; letter-spacing: 1.2px; text-transform: uppercase;
-  color: var(--muted); padding: 4px 7px; border-radius: 6px;
+  color: #c9c9d1; padding: 4px 7px; border-radius: 6px;
   border: 1px solid var(--line-2);
-  background: linear-gradient(90deg, var(--enemy-soft), var(--ally-soft));
+  background: var(--card-3);
 }
 .brand-sub { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; margin-top: 4px; }
 .brand-sub span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
