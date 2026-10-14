@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Контрпикер Dota 2 на данных Dotabuff и OpenDota.">
+  <title>DotaBuff Counter Picker</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Rajdhani:wght@600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">CP</span>
+      <div>
+        <div class="brand-title">Counter Picker</div>
+        <div class="brand-sub" id="data-info">загрузка…</div>
+      </div>
+    </div>
+    <div class="topbar-actions">
+      <div class="seg" id="source-switch" role="tablist" aria-label="Источник данных">
+        <button data-source="dotabuff">Dotabuff</button>
+        <button data-source="opendota">OpenDota live</button>
+      </div>
+      <button class="btn ghost" id="btn-share" title="Скопировать ссылку на текущий драфт">Поделиться</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <!-- Драфт -->
+    <section class="draft card">
+      <div class="team team-enemy">
+        <div class="team-head">
+          <span class="team-label">Враги</span>
+          <span class="team-hint">ЛКМ по герою</span>
+          <button class="link" data-clear="enemy">очистить</button>
+        </div>
+        <div class="slots" id="slots-enemy"></div>
+      </div>
+      <div class="team team-ally">
+        <div class="team-head">
+          <span class="team-label">Ваша команда</span>
+          <span class="team-hint">ПКМ по герою</span>
+          <button class="link" data-clear="ally">очистить</button>
+        </div>
+        <div class="slots" id="slots-ally"></div>
+      </div>
+      <div class="team team-ban">
+        <div class="team-head">
+          <span class="team-label">Баны</span>
+          <span class="team-hint">Shift + клик</span>
+          <button class="link" data-clear="ban">очистить</button>
+        </div>
+        <div class="bans" id="slots-ban"></div>
+      </div>
+    </section>
+
+    <!-- Сетка героев -->
+    <section class="pool card">
+      <div class="pool-head">
+        <div class="search">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.5 3a7.5 7.5 0 0 1 5.93 12.09l4.24 4.24-1.41 1.41-4.24-4.24A7.5 7.5 0 1 1 10.5 3zm0 2a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11z"/></svg>
+          <input id="search" type="text" placeholder="Поиск: имя или сокращение (am, qop, sf)…" autocomplete="off" spellcheck="false">
+          <kbd>Enter</kbd>
+        </div>
+        <div class="seg small" id="pick-mode" aria-label="Куда добавлять по клику">
+          <button data-mode="enemy" class="active">→ Враги</button>
+          <button data-mode="ally">→ Свои</button>
+          <button data-mode="ban">→ Бан</button>
+        </div>
+      </div>
+      <div class="pool-grid" id="pool"></div>
+    </section>
+
+    <!-- Рекомендации -->
+    <section class="picks card">
+      <div class="picks-head">
+        <div class="seg" id="picks-tab">
+          <button data-tab="best" class="active">Лучшие пики</button>
+          <button data-tab="worst">Худшие пики</button>
+        </div>
+        <div class="chips" id="role-filter"></div>
+      </div>
+      <div id="picks-body" class="picks-body"></div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    Основано на <a href="https://github.com/mnmistake/DotaBuffCP">DotaBuffCP</a>.
+    Данные: <a href="https://www.dotabuff.com">Dotabuff</a> / <a href="https://www.opendota.com">OpenDota</a>,
+    обновляются автоматически (<button class="link" id="btn-update">обновить вручную</button>).
+    Горячие клавиши: печатайте имя → <kbd>Enter</kbd> во враги, <kbd>Shift</kbd>+<kbd>Enter</kbd> к своим,
+    <kbd>Backspace</kbd> в пустом поиске удаляет последнего врага, <kbd>Esc</kbd> очищает поиск.
+  </footer>
+
+  <!-- Модалка обновления данных -->
+  <dialog id="update-dialog" class="dialog">
+    <form method="dialog" class="dialog-inner">
+      <h2>Обновить данные Dotabuff</h2>
+      <p>Данные обновляются автоматически раз в сутки — делать ничего не нужно.
+         Если хотите свежие данные прямо сейчас, соберите их своим браузером:</p>
+      <ol>
+        <li>Нажмите <b>«Скопировать скрипт»</b>.</li>
+        <li>Откройте <a href="https://www.dotabuff.com/heroes" target="_blank" rel="noopener">dotabuff.com/heroes</a>, затем консоль браузера (<kbd>F12</kbd> → Console).</li>
+        <li>Вставьте скрипт и нажмите <kbd>Enter</kbd>. Chrome при первой вставке попросит ввести <code>allow pasting</code>.</li>
+        <li>Через 1–3 минуты скачается <code>data.js</code>. Положите его рядом с <code>index.html</code> или перетащите сюда.</li>
+      </ol>
+      <div class="drop" id="drop-zone">Перетащите <code>data.js</code> сюда или <label class="link">выберите файл<input type="file" id="file-input" accept=".js,.json" hidden></label></div>
+      <div class="dialog-actions">
+        <button type="button" class="btn" id="btn-copy-script">Скопировать скрипт</button>
+        <button type="button" class="btn ghost" id="btn-forget" title="Удалить импортированные данные из браузера">Сбросить импорт</button>
+        <button class="btn ghost" value="close">Закрыть</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <!-- data.js app.js загружает сам, всегда свежую версию; без него работает режим OpenDota -->
+  <script src="scraper.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,70 @@
+name: Update data & deploy
+
+on:
+  schedule:
+    - cron: '17 */6 * * *' # каждые 6 часов
+  workflow_dispatch:        # кнопка «Run workflow» во вкладке Actions
+  push:
+    branches: [main]        # правки сайта публикуются сразу (без сбора данных)
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  update:
+    if: github.event_name != 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Playwright (uses the runner's Google Chrome)
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+        run: |
+          npm i --no-save playwright@1
+          sudo apt-get install -y xvfb >/dev/null
+
+      - name: Scrape Dotabuff
+        run: xvfb-run -a node scripts/update-data.mjs
+
+      - name: Commit data.js
+        run: |
+          git config user.name 'lavrishkovlad'
+          git config user.email 'lavrishkovlad@gmail.com'
+          git add data.js
+          if git diff --cached --quiet; then
+            echo 'Данные не изменились'
+          else
+            git commit -m "Update Dotabuff data $(date -u +%F)"
+            git push
+          fi
+
+  deploy:
+    needs: update
+    # публикуем даже если сбор упал — на сайте останутся последние удачные данные
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}   # свежий коммит с новым data.js
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+      - id: deployment
+        uses: actions/deploy-pages@v4
