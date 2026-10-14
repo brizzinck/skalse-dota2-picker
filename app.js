@@ -234,6 +234,13 @@ async function calculate() {
   renderAll();
 }
 
+function renderAll() {
+  renderSlots();
+  renderPool();
+  renderPicks();
+  renderBuilds();
+}
+
 /* ===================== позиции ===================== */
 
 const MIN_POS_SHARE = 0.1;  // герой «играет» позицию, если ≥10% его игр на ней
@@ -338,7 +345,7 @@ function add(key, side = state.mode) {
 function remove(key) {
   for (const side of ['enemy', 'ally']) {
     const i = state[side].indexOf(key);
-    if (i !== -1) state[side][i] = null;
+    if (i !== -1) { state[side][i] = null; state[side + 'Manual'][i] = false; }
   }
   state.ban = state.ban.filter((k) => k !== key);
   changed();
@@ -346,11 +353,16 @@ function remove(key) {
 
 function clearSide(side) {
   if (side === 'ban') state.ban = [];
-  else state[side] = [null, null, null, null, null];
+  else {
+    state[side] = [null, null, null, null, null];
+    state[side + 'Manual'] = [false, false, false, false, false];
+  }
   changed();
 }
 
 function changed() {
+  autoAssign('ally');
+  autoAssign('enemy');
   writeHash();
   renderSlots();
   renderPool();
@@ -386,7 +398,11 @@ function searchMatches() {
 
 function writeHash() {
   const p = [];
-  const e = state.enemy.filter(Boolean), a = state.ally.filter(Boolean);
+  // герой.позиция — позиция пишется, только если её задали вручную
+  const enc = (side) => state[side]
+    .map((k, i) => (k ? k + (state[side + 'Manual'][i] ? '.' + state[side + 'Pos'][i] : '') : null))
+    .filter(Boolean);
+  const e = enc('enemy'), a = enc('ally');
   if (e.length) p.push('e=' + e.join(','));
   if (a.length) p.push('a=' + a.join(','));
   if (state.ban.length) p.push('b=' + state.ban.join(','));
@@ -406,26 +422,38 @@ function readHash() {
     return;
   }
   const params = new URLSearchParams(raw);
-  (params.get('e') || '').split(',').map(norm).filter(valid).slice(0, 5).forEach((k, i) => (state.enemy[i] = k));
-  (params.get('a') || '').split(',').map(norm).filter(valid).slice(0, 5).forEach((k, i) => (state.ally[i] = k));
+  for (const [param, side] of [['e', 'enemy'], ['a', 'ally']]) {
+    let i = 0;
+    for (const part of (params.get(param) || '').split(',')) {
+      const [name, pos] = part.split('.');
+      const k = norm(name);
+      if (!valid(k) || i >= 5) continue;
+      state[side][i] = k;
+      if (+pos >= 1 && +pos <= 5) { state[side + 'Pos'][i] = +pos; state[side + 'Manual'][i] = true; }
+      i++;
+    }
+  }
   state.ban = (params.get('b') || '').split(',').map(norm).filter(valid);
 }
 
 /* ===================== рендер ===================== */
 
-function renderAll() {
-  renderSlots();
-  renderPool();
-  renderPicks();
-}
-
 function renderSlots() {
   for (const side of ['enemy', 'ally']) {
     $('#slots-' + side).innerHTML = state[side].map((k, i) => {
-      if (!k) return `<div class="slot empty" data-side="${side}" data-i="${i}" title="Добавлять сюда по клику"></div>`;
+      if (!k) return `<div class="slot-wrap"><div class="slot empty" data-side="${side}" data-i="${i}" title="Добавлять сюда по клику"></div></div>`;
       const h = hero(k);
-      return `<div class="slot filled" data-remove="${k}" title="Убрать ${esc(h.name)}">
-        <img src="${h.img}" alt="" loading="lazy"><span class="slot-name">${esc(h.name)}</span><span class="slot-x">×</span></div>`;
+      const cur = state[side + 'Pos'][i];
+      const manual = state[side + 'Manual'][i];
+      const sh = posShares(k);
+      const pos = [1, 2, 3, 4, 5].map((p) =>
+        `<button class="pos ${p === cur ? 'active' : ''} ${p === cur && !manual ? 'auto' : ''}" data-side="${side}" data-i="${i}" data-pos="${p}"
+          title="Позиция ${p} · ${POS_NAMES[p]} · ${Math.round(sh[p] * 100)}% игр героя${p === cur && !manual ? ' (определено автоматически)' : ''}">${p}</button>`).join('');
+      return `<div class="slot-wrap">
+        <div class="slot filled" data-remove="${k}" title="Убрать ${esc(h.name)}">
+          <img src="${h.img}" alt="" loading="lazy"><span class="slot-name">${esc(h.name)}</span><span class="slot-x">×</span></div>
+        <div class="pos-pick">${pos}</div>
+      </div>`;
     }).join('');
   }
   $('#slots-ban').innerHTML = state.ban.length
@@ -456,9 +484,11 @@ function tile(h, matches, first, res) {
   else if (state.ally.includes(h.key)) cls.push('taken-ally');
   else if (state.ban.includes(h.key)) cls.push('taken');
   else if (res) {
-    const s = res.get(h.key).score;
+    const P = targetPos();
+    const s = scoreFor(h.key, P);
     const n = state.enemy.filter(Boolean).length;
     if (s >= 1.5 * n) cls.push('great'); else if (s >= 0.6 * n) cls.push('good'); else if (s <= -0.6 * n) cls.push('bad');
+    if (P && posShares(h.key)[P] < MIN_POS_SHARE) cls.push('offpos');
     badge = `<span class="tile-score ${sign(s)}">${fmt(s)}</span>`;
   }
   if (matches) cls.push(matches.has(h.key) ? 'match' : 'dim');
@@ -475,7 +505,20 @@ function renderRoleFilter() {
   $('#role-filter').innerHTML = chips.join('') + attrs.join('');
 }
 
+function renderPosFilter() {
+  const P = targetPos();
+  const autoLabel = state.pickPos === 'auto' ? (P ? `Авто → ${P}` : 'Авто') : 'Авто';
+  const btn = (v, label, title) =>
+    `<button class="${String(state.pickPos) === String(v) ? 'active' : ''}" data-pickpos="${v}" title="${esc(title)}">${label}</button>`;
+  $('#pos-filter').innerHTML =
+    `<span class="pos-label">Пикаю на</span><div class="seg small">` +
+    btn('auto', autoLabel, 'Первая свободная позиция в вашей команде') +
+    [1, 2, 3, 4, 5].map((p) => btn(p, p, `Позиция ${p} · ${POS_NAMES[p]}`)).join('') +
+    btn(0, 'Любая', 'Без учёта позиции') + '</div>';
+}
+
 function renderPicks() {
+  renderPosFilter();
   renderRoleFilter();
   const body = $('#picks-body');
   const res = state.results;
@@ -489,13 +532,16 @@ function renderPicks() {
   }
 
   const busy = taken();
+  const P = targetPos();
   let list = state.heroes.filter((h) => !busy.has(h.key));
+  if (P) list = list.filter((h) => posShares(h.key)[P] >= MIN_POS_SHARE);
   if (state.roles.size) list = list.filter((h) => [...state.roles].every((r) => h.roles.includes(r)));
   if (state.attr) list = list.filter((h) => h.attr === state.attr);
-  list.sort((a, b) => (state.tab === 'best' ? 1 : -1) * (res.get(b.key).score - res.get(a.key).score));
+  const score = new Map(list.map((h) => [h.key, scoreFor(h.key, P)]));
+  list.sort((a, b) => (state.tab === 'best' ? 1 : -1) * (score.get(b.key) - score.get(a.key)));
 
   const limit = state.showAll ? list.length : 25;
-  const max = Math.max(1, ...list.map((h) => Math.abs(res.get(h.key).score)));
+  const max = Math.max(1, ...list.map((h) => Math.abs(score.get(h.key))));
 
   if (!list.length) {
     body.innerHTML = '<div class="empty-state"><p>Нет героев под выбранные фильтры.</p></div>';
@@ -504,24 +550,27 @@ function renderPicks() {
 
   body.innerHTML = list.slice(0, limit).map((h, i) => {
     const r = res.get(h.key);
-    const roles = h.roles.slice(0, 3).map((x) => ROLES[x] || x).join(' · ');
+    const s = score.get(h.key);
+    const sub = P ? `поз. ${P}: ${Math.round(posShares(h.key)[P] * 100)}% игр` : h.roles.slice(0, 3).map((x) => ROLES[x] || x).join(' · ');
     const vs = r.vs.map((v) => {
       const e = hero(v.key);
+      const lane = enemyWeight(v.key, P) > 1;
       const title = v.adv === null ? `${e.name}: нет данных`
-        : `${e.name}: ${fmt(v.adv)}%` + (v.wr != null ? `, винрейт ${v.wr.toFixed(1)}%` : '') + (v.games ? `, ${v.games.toLocaleString('ru')} матчей` : '');
-      return `<span class="vs" title="${esc(title)}"><img src="${e.icon || e.img}" alt=""><span class="${v.adv === null ? 'zero' : sign(v.adv)}">${v.adv === null ? '—' : fmt(v.adv)}</span></span>`;
+        : `${e.name}: ${fmt(v.adv)}%` + (v.wr != null ? `, винрейт ${v.wr.toFixed(1)}%` : '') + (v.games ? `, ${v.games.toLocaleString('ru')} матчей` : '') +
+          (lane ? ' · стоит против вас на линии (×1.5)' : '');
+      return `<span class="vs ${lane ? 'lane' : ''}" title="${esc(title)}"><img src="${e.icon || e.img}" alt=""><span class="${v.adv === null ? 'zero' : sign(v.adv)}">${v.adv === null ? '—' : fmt(v.adv)}</span></span>`;
     }).join('');
-    const pct = Math.round((Math.abs(r.score) / max) * 100);
-    const color = r.score >= 0 ? 'var(--good)' : 'var(--bad)';
+    const pct = Math.round((Math.abs(s) / max) * 100);
+    const color = s >= 0 ? 'var(--good)' : 'var(--bad)';
     return `<div class="pick" data-pick="${h.key}" title="Клик — добавить в свою команду">
       <span class="pick-rank">${i + 1}</span>
       <img class="pick-img" src="${h.img}" alt="" loading="lazy">
       <div class="pick-main">
-        <div class="pick-name">${esc(h.name)}<small>${esc(roles)}</small></div>
+        <div class="pick-name">${esc(h.name)}<small>${esc(sub)}</small></div>
         <div class="pick-vs">${vs}</div>
       </div>
       <div class="pick-score">
-        <b class="${sign(r.score)}">${fmt(r.score)}%</b>
+        <b class="${sign(s)}">${fmt(s)}%</b>
         <small>${r.wr != null ? 'WR ' + r.wr.toFixed(1) + '%' : ''}</small>
         <div class="bar"><span style="width:${pct}%;background:${color}"></span></div>
       </div>
@@ -610,6 +659,8 @@ function bind() {
   });
 
   $('.draft').addEventListener('click', (ev) => {
+    const pb = ev.target.closest('button.pos');
+    if (pb) { setPosition(pb.dataset.side, +pb.dataset.i, +pb.dataset.pos); return; }
     const rm = ev.target.closest('[data-remove]');
     if (rm) { remove(rm.dataset.remove); return; }
     const slot = ev.target.closest('.slot.empty');
@@ -633,6 +684,15 @@ function bind() {
     $('#picks-body').scrollTop = 0;
   });
 
+  $('#pos-filter').addEventListener('click', (ev) => {
+    const b = ev.target.closest('[data-pickpos]');
+    if (!b) return;
+    state.pickPos = b.dataset.pickpos === 'auto' ? 'auto' : +b.dataset.pickpos;
+    state.showAll = false;
+    renderPool();
+    renderPicks();
+  });
+
   $('#role-filter').addEventListener('click', (ev) => {
     const b = ev.target.closest('.chip');
     if (!b) return;
@@ -647,7 +707,12 @@ function bind() {
   $('#picks-body').addEventListener('click', (ev) => {
     if (ev.target.id === 'show-all') { state.showAll = true; renderPicks(); return; }
     const p = ev.target.closest('[data-pick]');
-    if (p && add(p.dataset.pick, 'ally')) toast(hero(p.dataset.pick).name + ' добавлен в вашу команду');
+    if (!p) return;
+    const P = targetPos();
+    if (add(p.dataset.pick, 'ally')) {
+      if (P) setPosition('ally', state.ally.indexOf(p.dataset.pick), P);
+      toast(hero(p.dataset.pick).name + ' добавлен в вашу команду' + (P ? ` на позицию ${P}` : ''));
+    }
   });
 
   $('#source-switch').addEventListener('click', (ev) => {
@@ -710,6 +775,7 @@ function setMode(mode) {
 }
 
 function setSource(src) {
+  shareCache.clear(); // данные могли поменяться (импорт)
   state.source = src;
   store.set('dbcp_source', src);
   renderSource();
@@ -764,6 +830,8 @@ async function init() {
   if (!haveOd) state.source = 'dotabuff';
 
   readHash();
+  autoAssign('ally');
+  autoAssign('enemy');
   renderSource();
   await calculate();
   if (matchMedia('(min-width: 1101px)').matches) $('#search').focus({ preventScroll: true });

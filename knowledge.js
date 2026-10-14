@@ -159,7 +159,7 @@ const THREATS = {
   zeus: ['magic'],
 };
 
-// for: core | support | any;  p — приоритет (1–3)
+// for: core | support | any;  pos — только для этих позиций (необязательно);  p — приоритет (1–3)
 const COUNTER_ITEMS = {
   illusions: [
     { item: 'mjollnir', for: 'core', p: 3, why: 'цепная молния выносит иллюзии' },
@@ -167,7 +167,7 @@ const COUNTER_ITEMS = {
     { item: 'maelstrom', for: 'core', p: 2, why: 'дешёвая молния против иллюзий' },
     { item: 'radiance', for: 'core', p: 2, why: 'жжёт пачку иллюзий' },
     { item: 'shivas_guard', for: 'core', p: 2, why: 'AoE-урон и замедление' },
-    { item: 'crimson_guard', for: 'core', p: 1, why: 'блок урона от толпы иллюзий' },
+    { item: 'crimson_guard', for: 'core', pos: [3], p: 1, why: 'блок урона от толпы иллюзий' },
   ],
   evasion: [
     { item: 'monkey_king_bar', for: 'core', p: 3, why: 'true strike пробивает уклонение' },
@@ -181,7 +181,7 @@ const COUNTER_ITEMS = {
   ],
   magic: [
     { item: 'black_king_bar', for: 'core', p: 3, why: 'иммунитет к магии в драке' },
-    { item: 'pipe', for: 'core', p: 2, why: 'командный барьер от магии' },
+    { item: 'pipe', for: 'core', pos: [3], p: 2, why: 'командный барьер от магии' },
     { item: 'glimmer_cape', for: 'support', p: 3, why: 'барьер от магии и невидимость' },
     { item: 'cloak', for: 'any', p: 1, why: 'дешёвое сопротивление магии на линии' },
     { item: 'mage_slayer', for: 'core', p: 1, why: 'режет магический урон врага' },
@@ -197,9 +197,9 @@ const COUNTER_ITEMS = {
     { item: 'force_staff', for: 'support', p: 2, why: 'выдернуть себя или союзника' },
     { item: 'solar_crest', for: 'support', p: 2, why: 'броня и промахи для керри' },
     { item: 'assault', for: 'core', p: 2, why: '-броня врагу, +броня своим' },
-    { item: 'blade_mail', for: 'core', p: 2, why: 'отражает урон с руки' },
-    { item: 'heavens_halberd', for: 'core', p: 2, why: 'дизарм керри на 5 сек' },
-    { item: 'crimson_guard', for: 'core', p: 1, why: 'блок урона всей команде' },
+    { item: 'blade_mail', for: 'core', pos: [2, 3], p: 2, why: 'отражает урон с руки' },
+    { item: 'heavens_halberd', for: 'core', pos: [3], p: 2, why: 'дизарм керри на 5 сек' },
+    { item: 'crimson_guard', for: 'core', pos: [3], p: 1, why: 'блок урона всей команде' },
   ],
   passive: [
     { item: 'silver_edge', for: 'core', p: 3, why: 'break отключает пассивки' },
@@ -236,7 +236,7 @@ const COUNTER_ITEMS = {
   summons: [
     { item: 'bfury', for: 'core', p: 2, why: 'сплеш по призывам' },
     { item: 'mjollnir', for: 'core', p: 2, why: 'молния по крипам и призывам' },
-    { item: 'crimson_guard', for: 'core', p: 2, why: 'блок урона от призывов' },
+    { item: 'crimson_guard', for: 'core', pos: [3], p: 2, why: 'блок урона от призывов' },
     { item: 'shivas_guard', for: 'core', p: 1, why: 'AoE-урон по призывам' },
     { item: 'mekansm', for: 'support', p: 1, why: 'хил команде против пуша' },
   ],

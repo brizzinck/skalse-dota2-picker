@@ -153,6 +153,7 @@ function counterItemsFor(heroKey, pos, stats) {
     for (const threat of THREATS[e.key] || []) {
       for (const ci of COUNTER_ITEMS[threat] || []) {
         if (ci.for !== 'any' && ci.for !== cls) continue;
+        if (ci.pos && pos && !ci.pos.includes(pos)) continue;
         const own = builds_.get(ci.item);
         if (ATTACK_ITEMS.has(ci.item) && !(own && (own.share == null || own.share >= 0.01))) continue;
         let w = ci.p * (laneFoe ? 1.3 : 1);
@@ -192,19 +193,21 @@ async function buildFor(heroKey, pos) {
     return true;
   });
   // компоненты, которые почти всегда собираются дальше, не показываем
-  const present = new Map(ok.map((s) => [s.key, s]));
   const isComponent = (s) => ok.some((o) => o.key !== s.key && items[o.key].components.includes(s.key) && o.matches >= s.matches * 0.5);
 
   const early = ok
     .filter((s) => items[s.key].cost < 1100 && !BOOTS.has(s.key) && !isComponent(s) && (s.share == null || s.share >= 0.15))
     .slice(0, 3);
-  let boots = ok.filter((s) => BOOTS.has(s.key) && s.key !== 'boots' && s.key !== 'travel_boots')[0];
+  const boots = ok.filter((s) => BOOTS.has(s.key) && s.key !== 'boots' && s.key !== 'travel_boots')[0];
   const core = ok
     .filter((s) => items[s.key].cost >= 1100 && !BOOTS.has(s.key) && !isComponent(s))
-    .slice(0, cls === 'core' ? 7 : 5);
+    .slice(0, cls === 'core' ? 5 : 4);
 
   const counters = counterItemsFor(heroKey, pos, stats);
-  const counterTop = counters.filter((c) => !present.has(c.item) || !core.some((x) => x.key === c.item)).slice(0, 3);
+  // в таймлайн добавляем только «настоящие» предметы; расходники (Dust, сентри) остаются в списке контр-предметов
+  const counterTop = counters
+    .filter((c) => !core.some((x) => x.key === c.item) && !SKIP_ITEMS.has(c.item) && items[c.item].cost >= 1000)
+    .slice(0, 2);
   const counterSet = new Map(counters.map((c) => [c.item, c]));
 
   // порядок: ранние → ботинки → остальное по реальному таймингу (OpenDota) или по цене
@@ -220,20 +223,22 @@ async function buildFor(heroKey, pos) {
   ].sort(order);
   const timeline = [...early.map((s) => ({ ...s, phase: 'early' })), ...(boots ? [{ ...boots, phase: 'boots' }] : []), ...main.map((s) => ({ ...s, phase: 'main' }))];
 
-  // ETA: накопленная стоимость / GPM героя на этой позиции; если есть реальный тайминг — он важнее
+  // ETA: накопленная стоимость / GPM героя на этой позиции. Реальный тайминг OpenDota берём,
+  // только если он меньше 25 минут — дальше у OpenDota одна общая корзина «до 30 минут».
   const gpm = laneGpm(heroKey, pos || 1);
   let spent = 0, last = 0;
   for (const s of timeline) {
     spent += items[s.key].cost;
     const est = (spent / gpm) + 1;
     const t = timings.get(s.key);
-    s.eta = Math.max(last, t ? Math.min(t.median, est * 1.25) : est);
-    s.real = !!t;
+    s.real = !!(t && t.median < 25);
+    s.eta = Math.max(last, s.real ? Math.min(t.median, est * 1.25) : est);
     s.timing = t || null;
     last = s.eta;
   }
 
-  return { heroKey, pos, cls, gpm, timeline, counters: counters.slice(0, 6) };
+  // игры редко идут дольше ~55 минут — дальше это уже не план, а гадание
+  return { heroKey, pos, cls, gpm, timeline: timeline.filter((s) => s.eta <= 55), counters: counters.slice(0, 6) };
 }
 
 /* ---------- рендер ---------- */
@@ -264,7 +269,8 @@ function buildCard(b) {
     { name: 'Линия', list: b.timeline.filter((s) => s.phase === 'early' || s.phase === 'boots') },
     { name: 'До 20 минут', list: b.timeline.filter((s) => s.phase === 'main' && s.eta < 20) },
     { name: '20–30 минут', list: b.timeline.filter((s) => s.phase === 'main' && s.eta >= 20 && s.eta < 30) },
-    { name: '30+ минут', list: b.timeline.filter((s) => s.phase === 'main' && s.eta >= 30) },
+    { name: '30–40 минут', list: b.timeline.filter((s) => s.phase === 'main' && s.eta >= 30 && s.eta < 40) },
+    { name: 'Лейт', list: b.timeline.filter((s) => s.phase === 'main' && s.eta >= 40) },
   ].filter((p) => p.list.length);
 
   const lane = b.pos ? enemyTeam().filter((e) => e.pos && LANE_FOES[b.pos].includes(e.pos)) : [];

@@ -77,6 +77,7 @@
     <!-- Рекомендации -->
     <section class="picks card">
       <div class="picks-head">
+        <div class="pos-filter" id="pos-filter"></div>
         <div class="seg" id="picks-tab">
           <button data-tab="best" class="active">Лучшие пики</button>
           <button data-tab="worst">Худшие пики</button>
@@ -86,6 +87,16 @@
       <div id="picks-body" class="picks-body"></div>
     </section>
   </main>
+
+  <!-- Билды вашей команды -->
+  <section class="builds-section" id="builds" hidden>
+    <div class="builds-title">
+      <h2>Билды вашей команды</h2>
+      <p class="muted">Что собирать и к какой минуте — популярные предметы героя в текущем патче (Dotabuff) и реальные тайминги покупки (OpenDota).
+        <span class="legend"><span class="item-flag">⚑</span> — предмет против вражеского пика, <b>≈</b> — расчётное время по GPM. Наведите на предмет — подробности.</span></p>
+    </div>
+    <div class="builds-grid" id="builds-body"></div>
+  </section>
 
   <footer class="foot">
     Основано на <a href="https://github.com/mnmistake/DotaBuffCP">DotaBuffCP</a>.
@@ -120,6 +131,8 @@
 
   <!-- data.js app.js загружает сам, всегда свежую версию; без него работает режим OpenDota -->
   <script src="scraper.js"></script>
+  <script src="knowledge.js"></script>
+  <script src="builds.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
