@@ -15,7 +15,7 @@ jobs:
   update:
     if: github.event_name != 'push'
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 15
     permissions:
       contents: write
     steps:
@@ -25,25 +25,15 @@ jobs:
         with:
           node-version: 22
 
-      # Stratz: plain API requests, no browser — the main source of fresh data
+      # Stratz: plain API requests, no browser — the main source of fresh data.
+      # Dotabuff is NOT collected here: Cloudflare blocks browsers on GitHub's datacenter IPs.
+      # It is collected on a home PC instead (update-data.ps1 -Push, scheduled by install-autoupdate.ps1);
+      # scripts/update-data.mjs can still be run manually on any machine with Node and Chrome.
       - name: Collect Stratz
         env:
           STRATZ_TOKEN: ${{ secrets.STRATZ || vars.STRATZ }}
         if: env.STRATZ_TOKEN != ''
-        continue-on-error: true
         run: node scripts/stratz.mjs
-
-      # Dotabuff: needs a real browser and may be blocked by Cloudflare on datacenter IPs
-      - name: Install Patchright / Playwright (use the runner's Google Chrome)
-        env:
-          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
-        run: |
-          npm i --no-save patchright@1 playwright@1
-          sudo apt-get install -y xvfb >/dev/null
-
-      - name: Scrape Dotabuff
-        continue-on-error: true
-        run: xvfb-run -a node scripts/update-data.mjs
 
       - name: Commit data
         run: |
@@ -53,7 +43,7 @@ jobs:
           if git diff --cached --quiet; then
             echo 'Data unchanged'
           else
-            git commit -m "Update Dotabuff data $(date -u +%F)"
+            git commit -m "Update Stratz data $(date -u +%F)"
             git pull --rebase
             git push
           fi

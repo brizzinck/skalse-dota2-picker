@@ -487,7 +487,7 @@ async function renderBuilds() {
     const prepared = await Promise.all(allies.map((a) => prepareBuild(a.key, a.pos)));
     if (token !== buildsToken) return;
     const { banned, owner } = allocateTeamItems(prepared);
-    body.innerHTML = prepared.map((b) => buildCard(finalizeBuild(b, banned.get(b)), owner)).join('');
+    patchHTML(body, prepared.map((b) => buildCard(finalizeBuild(b, banned.get(b)), owner)).join(''));
   } catch (e) {
     if (token !== buildsToken) return;
     console.error(e);

@@ -67,6 +67,27 @@ const fmt = (v) => (v > 0 ? '+' : '') + v.toFixed(2);
 // CSS class for a signed value
 const sign = (v) => (v > 0.05 ? 'up' : v < -0.05 ? 'down' : 'flat');
 
+// Re-render a container without re-creating its images: <img> nodes with the same src are moved into
+// the new markup, so portraits don't blink when only scores, classes or order change.
+function patchHTML(el, html) {
+  const old = new Map();
+  el.querySelectorAll('img').forEach((img) => {
+    const list = old.get(img.src) || [];
+    list.push(img);
+    old.set(img.src, list);
+  });
+  el.innerHTML = html;
+  if (!old.size) return;
+  el.querySelectorAll('img').forEach((img) => {
+    const list = old.get(img.src);
+    if (!list || !list.length) return;
+    const keep = list.shift();
+    for (const a of [...keep.attributes]) if (!img.hasAttribute(a.name)) keep.removeAttribute(a.name);
+    for (const a of [...img.attributes]) if (a.name !== 'src') keep.setAttribute(a.name, a.value);
+    img.replaceWith(keep);
+  });
+}
+
 const store = {
   get(key, fallback = null) {
     try {
@@ -394,6 +415,10 @@ function add(key, side = state.mode) {
     const i = arr.indexOf(null);
     if (i === -1) { toast(t(side === 'enemy' ? 'toast.full.enemy' : 'toast.full.ally')); return false; }
     arr[i] = key;
+    if (side === 'enemy' && state.mode === 'enemy' && !state.enemy.includes(null)) {
+      setMode('ally');
+      toast(t('toast.enemies.done'));
+    }
   }
   changed();
   return true;
@@ -515,7 +540,7 @@ function readHash() {
 
 function renderSlots() {
   for (const side of ['enemy', 'ally']) {
-    $('#slots-' + side).innerHTML = state[side].map((k, i) => {
+    patchHTML($('#slots-' + side), state[side].map((k, i) => {
       if (!k) {
         return `<div class="slot-wrap"><button class="slot empty" data-side="${side}" data-i="${i}" title="${esc(t('slot.empty'))}" aria-label="${esc(t('slot.empty'))}"></button></div>`;
       }
@@ -534,11 +559,11 @@ function renderSlots() {
         <div class="pos-pick" role="group">${pos}</div>
         <div class="slot-role">${cur ? esc(posName(cur)) : ''}</div>
       </div>`;
-    }).join('');
+    }).join(''));
   }
-  $('#slots-ban').innerHTML = state.ban.length
+  patchHTML($('#slots-ban'), state.ban.length
     ? state.ban.map((k) => `<button class="ban" data-remove="${k}" title="${esc(t('slot.remove', { name: hero(k).name }))}"><img src="${hero(k).img}" alt="${esc(hero(k).name)}"></button>`).join('')
-    : `<span class="empty-note">${esc(t('bans.empty'))}</span>`;
+    : `<span class="empty-note">${esc(t('bans.empty'))}</span>`);
   $$('[data-clear]').forEach((b) => {
     const side = b.dataset.clear;
     b.disabled = side === 'ban' ? !state.ban.length : !state[side].some(Boolean);
@@ -553,14 +578,14 @@ function renderPool() {
   const first = matchList ? matchList[0] : null;
   const res = state.results;
 
-  $('#pool').innerHTML = ATTRS.map((a) => {
+  patchHTML($('#pool'), ATTRS.map((a) => {
     const list = state.heroes.filter((h) => h.attr === a.k).sort((x, y) => x.name.localeCompare(y.name));
     if (!list.length) return '';
     return `<div class="attr-group">
       <div class="attr-title"><i style="background:${a.color}"></i>${esc(t('attr.' + a.k))}</div>
       <div class="tiles">${list.map((h) => tile(h, matches, first, res)).join('')}</div>
     </div>`;
-  }).join('');
+  }).join(''));
 }
 
 function tile(h, matches, first, res) {
@@ -569,7 +594,8 @@ function tile(h, matches, first, res) {
   if (state.enemy.includes(h.key)) cls.push('taken-enemy');
   else if (state.ally.includes(h.key)) cls.push('taken-ally');
   else if (state.ban.includes(h.key)) cls.push('taken');
-  else if (res) {
+  else if (res && state.mode === 'ally') {
+    // scores light up only while you pick your own heroes; while picking enemies the grid stays neutral
     const P = targetPos();
     const s = totalScore(h.key, P);
     const n = state.enemy.filter(Boolean).length;
@@ -653,7 +679,7 @@ function renderPicks() {
     ? `<div class="picks-note">${esc(t('note.meta', { p: P, role: posName(P) }))}</div>`
     : P ? `<div class="picks-note">${esc(t('note.pos', { p: P, w: META_WEIGHT }))}</div>` : '';
 
-  body.innerHTML = head + list.slice(0, limit).map((h, i) => {
+  patchHTML(body, head + list.slice(0, limit).map((h, i) => {
     const r = res && res.get(h.key);
     const p = parts.get(h.key);
     const s = p.total;
@@ -691,7 +717,7 @@ function renderPicks() {
       <span class="pick-add" aria-hidden="true">+ ${esc(t('pick.add'))}</span>
     </div>`;
   }).join('') + (list.length > limit
-    ? `<button class="btn ghost more" id="show-all">${esc(t('showall', { n: list.length }))}</button>` : '');
+    ? `<button class="btn ghost more" id="show-all">${esc(t('showall', { n: list.length }))}</button>` : ''));
 }
 
 function renderSource() {
@@ -948,8 +974,10 @@ function bind() {
 }
 
 function setMode(mode) {
+  const changedMode = state.mode !== mode;
   state.mode = mode;
   $$('#pick-mode button').forEach((b) => { b.classList.toggle('active', b.dataset.mode === mode); b.setAttribute('aria-pressed', b.dataset.mode === mode); });
+  if (changedMode && state.heroes.length) renderPool();
 }
 
 function setSource(src) {
@@ -1014,6 +1042,7 @@ async function init() {
   readHash();
   autoAssign('ally');
   autoAssign('enemy');
+  if (!state.enemy.includes(null)) setMode('ally'); // a shared link with a full enemy team
   renderSource();
   await calculate();
   if (matchMedia('(min-width: 1101px)').matches) $('#search').focus({ preventScroll: true });

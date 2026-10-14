@@ -51,20 +51,21 @@ For every hero of your team — what to buy and by which minute:
 
 | Source | What | How it is refreshed |
 |---|---|---|
-| **Dotabuff** | counters, lanes, item stats, guides for the current patch (`?date=patch_X.XX`; the last week right after a new patch) | `data.js`, collected by `scraper.js` |
+| **Stratz** (default) | per-position hero share and win rate, matchups, item purchases per position with minutes — all ranked games of the current patch | `stratz.js`, collected by `scripts/stratz.mjs` in GitHub Actions every 6 hours (plain API requests, no browser) |
+| **Dotabuff** | counters, lanes, item stats, guides for the current patch | `data.js`, collected by `scraper.js` in a real browser on a home PC |
 | **OpenDota** | hero list and images, item constants, purchase timings; live counter fallback | fetched by the browser, cached for a day |
 
-Every visit loads the latest `data.js` (bypassing the cache). If the data is older than 3 days, the site switches to
-OpenDota live by itself.
+Every visit loads the latest data files (bypassing the cache). The source can be switched in the header; if the
+selected data is older than 3 days, the site falls back to the next source by itself.
 
 ### Keeping the data fresh
 
-Dotabuff is behind Cloudflare, so the data is collected by a real browser running `scraper.js` on dotabuff.com:
-
-- **GitHub Actions** (`.github/workflows/update-data.yml`) — every 6 hours tries Patchright / Playwright with
-  Google Chrome and commits `data.js`. Cloudflare is strict with datacenter IPs, so this may be blocked.
-- **Your Windows PC** (reliable): `update-data.ps1 -Push` runs a headless Microsoft Edge, collects the data and pushes
-  `data.js` to the repository. Schedule it every 6 hours and at log on:
+- **Stratz — GitHub Actions** (`.github/workflows/update-data.yml`): every 6 hours, needs the repository secret
+  `STRATZ` with a free token from https://stratz.com/api. Locally: put the token into `.stratz-token`
+  (gitignored) and run `node scripts/stratz.mjs`.
+- **Dotabuff — a home Windows PC**: Dotabuff is behind Cloudflare, which blocks browsers on GitHub's datacenter IPs
+  (tested with Playwright and Patchright). `update-data.ps1 -Push` runs a headless Microsoft Edge on your machine,
+  collects the data and pushes `data.js`. Schedule it every 6 hours and at log on:
 
   ```powershell
   powershell -ExecutionPolicy Bypass -File install-autoupdate.ps1          # install
