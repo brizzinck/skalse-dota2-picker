@@ -126,7 +126,7 @@ const I18N = {
     'nodata.p2': 'Check your connection or load data.js via “Update data”.',
 
     'builds.title': 'Your team’s builds',
-    'builds.desc': 'What to buy and when — from recent top-player matches on that exact position (Dotabuff Guides); time is the median purchase time. If the hero rarely plays the position — the patch-wide build filtered for it.',
+    'builds.desc': 'What to buy and when — from games on that exact position in the current patch (Stratz, or Dotabuff Guides); time is the median purchase time. The note on each card says which data the build uses.',
     'legend.flag': 'counter to the enemy draft',
     'legend.approx': 'estimated from GPM',
     'legend.team': 'one per team',
@@ -315,7 +315,7 @@ const I18N = {
     'nodata.p2': 'Проверьте интернет или загрузите data.js через «Обновить вручную».',
 
     'builds.title': 'Билды вашей команды',
-    'builds.desc': 'Что собирать и к какой минуте — по свежим матчам топ-игроков именно на этой позиции (Dotabuff Guides), время — медианное время покупки. Если герой редко играет позицию — билд героя за весь патч, отфильтрованный под неё.',
+    'builds.desc': 'Что собирать и к какой минуте — по играм именно на этой позиции в текущем патче (Stratz или Dotabuff Guides), время — медианное время покупки. На каждой карточке написано, на каких данных построен билд.',
     'legend.flag': 'против вражеского пика',
     'legend.approx': 'расчёт по GPM',
     'legend.team': 'один на команду',
@@ -504,7 +504,7 @@ const I18N = {
     'nodata.p2': 'Перевірте інтернет або завантажте data.js через «Оновити вручну».',
 
     'builds.title': 'Білди вашої команди',
-    'builds.desc': 'Що збирати і до якої хвилини — за свіжими матчами топ-гравців саме на цій позиції (Dotabuff Guides), час — медіанний час купівлі. Якщо герой рідко грає позицію — білд героя за весь патч, відфільтрований під неї.',
+    'builds.desc': 'Що збирати і до якої хвилини — за іграми саме на цій позиції в поточному патчі (Stratz або Dotabuff Guides), час — медіанний час купівлі. На кожній картці написано, на яких даних побудовано білд.',
     'legend.flag': 'проти ворожого піку',
     'legend.approx': 'розрахунок за GPM',
     'legend.team': 'один на команду',
