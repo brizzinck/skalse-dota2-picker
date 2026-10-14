@@ -182,7 +182,7 @@ const I18N = {
     'toast.forget': 'Imported data removed',
     'err.format': 'Invalid file format',
 
-    'footer.based': 'Based on <a href="https://github.com/mnmistake/DotaBuffCP">DotaBuffCP</a>. Data: <a href="https://www.dotabuff.com">Dotabuff</a> / <a href="https://www.opendota.com">OpenDota</a>, updated automatically.',
+    'footer.based': 'Data: <a href="https://stratz.com">Stratz</a> / <a href="https://www.dotabuff.com">Dotabuff</a> / <a href="https://www.opendota.com">OpenDota</a>, updated automatically.',
     'footer.update': 'Update manually',
     'footer.source': 'Source code',
 
@@ -371,7 +371,7 @@ const I18N = {
     'toast.forget': 'Импортированные данные удалены',
     'err.format': 'Неверный формат файла',
 
-    'footer.based': 'Основано на <a href="https://github.com/mnmistake/DotaBuffCP">DotaBuffCP</a>. Данные: <a href="https://www.dotabuff.com">Dotabuff</a> / <a href="https://www.opendota.com">OpenDota</a>, обновляются автоматически.',
+    'footer.based': 'Данные: <a href="https://stratz.com">Stratz</a> / <a href="https://www.dotabuff.com">Dotabuff</a> / <a href="https://www.opendota.com">OpenDota</a>, обновляются автоматически.',
     'footer.update': 'Обновить вручную',
     'footer.source': 'Исходный код',
 
@@ -560,7 +560,7 @@ const I18N = {
     'toast.forget': 'Імпортовані дані видалено',
     'err.format': 'Неправильний формат файлу',
 
-    'footer.based': 'Засновано на <a href="https://github.com/mnmistake/DotaBuffCP">DotaBuffCP</a>. Дані: <a href="https://www.dotabuff.com">Dotabuff</a> / <a href="https://www.opendota.com">OpenDota</a>, оновлюються автоматично.',
+    'footer.based': 'Дані: <a href="https://stratz.com">Stratz</a> / <a href="https://www.dotabuff.com">Dotabuff</a> / <a href="https://www.opendota.com">OpenDota</a>, оновлюються автоматично.',
     'footer.update': 'Оновити вручну',
     'footer.source': 'Вихідний код',
 

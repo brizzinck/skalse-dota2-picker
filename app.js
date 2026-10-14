@@ -1,6 +1,6 @@
 'use strict';
 /*
- * Counter Picker — draft, positions and counter-pick suggestions.
+ * Skalse Picker — draft, positions and counter-pick suggestions.
  * Item builds live in builds.js, translations in i18n.js, the knowledge base in knowledge.js.
  */
 
@@ -514,7 +514,7 @@ function readHash() {
   if (!raw) return;
   const valid = (k) => hero(k) && !taken().has(k);
   if (!raw.includes('=')) {
-    // the original DotaBuffCP format: #Anti-Mage/Axe/...
+    // legacy link format: #Anti-Mage/Axe/...
     raw.split('/').slice(0, 5).forEach((n, i) => {
       const k = norm(n.replace(/_/g, ' '));
       if (valid(k)) state.enemy[i] = k;
@@ -1015,7 +1015,7 @@ function ensureHeroesFromDotabuff() {
   const haveMeta = state.heroes.some((h) => h.id);
   for (const [key, h] of Object.entries(d.heroes)) {
     if (state.byKey.has(key)) continue;
-    if (haveMeta) { console.warn('[DotaBuffCP] Dotabuff hero not found in OpenDota:', h.name, key); continue; }
+    if (haveMeta) { console.warn('[Skalse] Dotabuff hero not found in OpenDota:', h.name, key); continue; }
     const entry = { key, id: null, name: h.name, attr: 'all', roles: [], img: h.img || '', icon: h.img || '', wr: 50 };
     state.heroes.push(entry);
     state.byKey.set(key, entry);

@@ -1,4 +1,4 @@
-<#
+﻿<#
   Updates data.js from Dotabuff on Windows.
 
   Starts a headless Microsoft Edge, opens dotabuff.com and runs scraper.js there through the
@@ -37,7 +37,7 @@ $edge = @(
 ) | Where-Object { Test-Path $_ } | Select-Object -First 1
 if (-not $edge) { Log 'ERROR: Microsoft Edge not found'; exit 1 }
 
-$profileDir = Join-Path $env:LOCALAPPDATA 'DotaBuffCP\edge-profile'
+$profileDir = Join-Path $env:LOCALAPPDATA 'SkalsePicker\edge-profile'
 New-Item -ItemType Directory -Force $profileDir | Out-Null
 
 $ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36 Edg/141.0.0.0'

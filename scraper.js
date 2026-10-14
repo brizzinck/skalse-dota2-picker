@@ -1,5 +1,5 @@
 /*
- * DotaBuffCP — Dotabuff data collector.
+ * Skalse Picker — Dotabuff data collector.
  *
  * Collects for the current patch:
  *   • counters  /heroes/<hero>/counters  — disadvantage, win rate, matches
@@ -34,7 +34,7 @@ async function dbcpScrape(opts) {
     'background:#12161f;color:#e8ecf3;font:13px/1.4 system-ui,sans-serif;border:1px solid #2d3546;' +
     'border-radius:10px;box-shadow:0 8px 30px rgba(0,0,0,.5);min-width:260px';
   document.body.appendChild(box);
-  const status = (t) => { box.textContent = 'DotaBuffCP: ' + t; console.log('[DotaBuffCP]', t); };
+  const status = (t) => { box.textContent = 'Skalse Picker: ' + t; console.log('[Skalse]', t); };
 
   async function get(path) {
     for (let attempt = 0; attempt < 5; attempt++) {
@@ -155,7 +155,7 @@ async function dbcpScrape(opts) {
       });
       if (raw[slug].length < 50) failed.push(slug);
     } catch (e) {
-      console.warn('[DotaBuffCP]', e);
+      console.warn('[Skalse]', e);
       failed.push(slug);
     }
     status(`counters ${++done}/${total} (${heroes[slug].name})`);
@@ -184,7 +184,7 @@ async function dbcpScrape(opts) {
         (lanes[k] = lanes[k] || {})[lane] = [+r.nums[0].toFixed(1), +r.nums[1].toFixed(2), Math.round(r.nums[3] || 0)];
       }
     } catch (e) {
-      console.warn('[DotaBuffCP] lanes', lane, e);
+      console.warn('[Skalse] lanes', lane, e);
       failed.push('lanes:' + lane);
     }
     await sleep(opts.delay);
@@ -208,7 +208,7 @@ async function dbcpScrape(opts) {
         .map((r) => [r.name, Math.round(r.nums[0]), +r.nums[1].toFixed(2)]);
       if (!rows.length) failed.push('items:' + slug);
     } catch (e) {
-      console.warn('[DotaBuffCP] items', slug, e);
+      console.warn('[Skalse] items', slug, e);
       failed.push('items:' + slug);
     }
     status(`items ${++done}/${total} (${heroes[slug].name})`);
@@ -259,7 +259,7 @@ async function dbcpScrape(opts) {
         list.push(...g);
         if (g.length < 3) break;
       } catch (e) {
-        console.warn('[DotaBuffCP] guides', slug, page, e);
+        console.warn('[Skalse] guides', slug, page, e);
         break;
       }
     }
@@ -332,5 +332,5 @@ async function dbcpScrape(opts) {
 }
 
 if (typeof location !== 'undefined' && /(^|\.)dotabuff\.com$/.test(location.hostname) && !window.DBCP_NO_AUTORUN) {
-  dbcpScrape().catch((e) => console.error('[DotaBuffCP]', e));
+  dbcpScrape().catch((e) => console.error('[Skalse]', e));
 }

@@ -1,8 +1,8 @@
-# Counter Picker — Dota 2
+# Skalse Picker — Dota 2
 
 A Dota 2 counter picker with position-aware suggestions and item builds, based on
-[Dotabuff](https://www.dotabuff.com) statistics (with [OpenDota](https://www.opendota.com) as a live fallback).
-A modern rewrite of [mnmistake/DotaBuffCP](https://github.com/mnmistake/DotaBuffCP).
+[Stratz](https://stratz.com) and [Dotabuff](https://www.dotabuff.com) statistics
+(with [OpenDota](https://www.opendota.com) as a live fallback).
 
 **Live site:** https://brizzinck.github.io/dota-analysis/ — Ukrainian by default, Russian and English selectable.
 No server needed: it is a static site, you can also just open `index.html`.
@@ -20,7 +20,7 @@ No server needed: it is a static site, you can also just open `index.html`.
 - While picking enemies the grid stays neutral; in "your team" mode it shows each hero's advantage. The mode switches
   to your team once 5 enemies are picked, and holding `Alt` turns it on temporarily.
 - Shareable draft links: `#e=pudge,antimage&a=axe.3,lion.5&b=invoker` (`hero.position` for manually set positions).
-  Links of the original DotaBuffCP (`#Pudge/Axe`) still work.
+  Legacy links (`#Pudge/Axe`) still work.
 
 ### Positions
 - Every hero of both teams has a **1–5** position switch. Positions are assigned automatically from Dotabuff lane data
@@ -94,4 +94,4 @@ selected data is older than 3 days, the site falls back to the next source by it
 
 ## License
 
-MIT — see `COPYING`. Based on DotaBuffCP by Onur Aslan.
+MIT — see `COPYING`.

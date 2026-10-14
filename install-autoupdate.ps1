@@ -1,4 +1,4 @@
-<#
+﻿<#
   Schedules automatic Dotabuff data updates in Windows Task Scheduler:
   every 6 hours and at log on (if the computer was off, it runs at the first opportunity).
   The task runs update-data.ps1 -Push, so the GitHub Pages site always gets fresh data.
@@ -9,7 +9,7 @@
 #>
 param([switch]$Remove, [switch]$NoPush)
 
-$name = 'DotaBuffCP data update'
+$name = 'Skalse Picker data update'
 
 if ($Remove) {
   Unregister-ScheduledTask -TaskName $name -Confirm:$false -ErrorAction SilentlyContinue
@@ -31,7 +31,7 @@ $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -RunOnlyIfNetworkAv
   -ExecutionTimeLimit (New-TimeSpan -Minutes 30) -MultipleInstances IgnoreNew -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
 
 Register-ScheduledTask -TaskName $name -Action $action -Trigger $triggers -Settings $settings `
-  -Description 'Updates data.js for DotaBuffCP from dotabuff.com' -Force | Out-Null
+  -Description 'Updates data.js for Skalse Picker from dotabuff.com' -Force | Out-Null
 
 Write-Host "Done: task '$name' updates the data every 6 hours and at log on$(if (-not $NoPush) { ', and pushes it to GitHub' })."
 Write-Host "Log: $(Join-Path $PSScriptRoot 'update.log')"

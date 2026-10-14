@@ -89,7 +89,7 @@ async function loadTimings(heroKey) {
         out.set(item, { median: median / 60, early: split((b) => b.t <= median), late: split((b) => b.t > median), games });
       }
     } catch (e) {
-      console.warn('[DotaBuffCP] itemTimings', heroKey, e);
+      console.warn('[Skalse] itemTimings', heroKey, e);
     }
   }
   builds.timings.set(heroKey, out);
