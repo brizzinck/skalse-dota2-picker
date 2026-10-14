@@ -137,9 +137,24 @@
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <!-- data.js app.js загружает сам, всегда свежую версию; без него работает режим OpenDota -->
-  <script src="scraper.js"></script>
-  <script src="knowledge.js"></script>
-  <script src="builds.js"></script>
-  <script src="app.js"></script>
+  <!-- Скрипты грузим с меткой времени (обновляется раз в 10 минут), чтобы после обновления
+       сайта браузер не держал старую версию из кэша. Порядок важен. -->
+  <script>
+    (function () {
+      var v = location.protocol.indexOf('http') === 0 ? '?v=' + Math.floor(Date.now() / 6e5) : '';
+      var css = document.querySelector('link[href="styles.css"]');
+      if (css && v) css.href = 'styles.css' + v;
+      ['scraper.js', 'knowledge.js', 'builds.js', 'app.js'].reduce(function (prev, src) {
+        return prev.then(function () {
+          return new Promise(function (resolve) {
+            var s = document.createElement('script');
+            s.src = src + v;
+            s.onload = s.onerror = resolve;
+            document.body.appendChild(s);
+          });
+        });
+      }, Promise.resolve());
+    })();
+  </script>
 </body>
 </html>
