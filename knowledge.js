@@ -265,6 +265,8 @@ const CORE_ITEMS = new Set([
   'bfury', 'radiance', 'manta', 'butterfly', 'satanic', 'skadi', 'greater_crit', 'monkey_king_bar', 'abyssal_blade',
   'mjollnir', 'disperser', 'desolator', 'hand_of_midas', 'diffusal_blade', 'heart', 'assault', 'bloodthorn',
   'silver_edge', 'black_king_bar', 'maelstrom', 'mask_of_madness', 'power_treads', 'echo_sabre', 'harpoon',
+  'kaya_and_sange', 'sange_and_yasha', 'yasha_and_kaya', 'bloodstone', 'sange', 'yasha', 'bottle', 'shivas_guard',
+  'manta', 'mage_slayer', 'phase_boots', 'witch_blade', 'revenants_brooch', 'falcon_blade', 'orchid',
 ]);
 // Расходники и компоненты, которые не показываем как «предмет билда»
 const SKIP_ITEMS = new Set([

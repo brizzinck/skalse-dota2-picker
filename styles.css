@@ -371,6 +371,16 @@ code { font-size: 12px; padding: 1px 5px; border-radius: 4px; background: var(--
 .team-ally .pos.active.auto { color: var(--ally); border-color: var(--ally); }
 
 .pos-filter { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.pos-filter .seg { flex-wrap: wrap; }
+.picks-note {
+  font-size: 12px; color: var(--muted); padding: 8px 10px; margin: 2px 4px 6px;
+  border-radius: 8px; background: var(--bg-2); border: 1px solid var(--line);
+}
+.pick-why { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.why {
+  font: 600 11px/1 Inter, system-ui, sans-serif; padding: 3px 7px; border-radius: 999px;
+  background: var(--bg-2); border: 1px solid var(--line);
+}
 .pos-label { color: var(--muted); font-size: 12px; font-weight: 600; }
 .tile.offpos:not(.dim) { opacity: .45; }
 .vs.lane { border-color: var(--accent); box-shadow: 0 0 0 1px rgba(226, 176, 74, .35); }
@@ -387,8 +397,8 @@ code { font-size: 12px; padding: 1px 5px; border-radius: 4px; background: var(--
 .build-hero { width: 96px; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 8px; }
 .build-name { font: 700 18px/1.2 Rajdhani, sans-serif; }
 .build-lane { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; color: var(--muted); font-size: 12px; }
-.build-src { font-size: 12px; color: var(--good); }
-.build-src.warn { color: var(--accent); }
+.build-src { font-size: 12px; line-height: 1.4; color: var(--muted); border-left: 2px solid var(--good); padding-left: 8px; }
+.build-src.warn { border-left-color: var(--accent); }
 .team-tag {
   font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px;
   color: var(--accent); border: 1px solid rgba(226, 176, 74, .45); border-radius: 4px; padding: 1px 4px;

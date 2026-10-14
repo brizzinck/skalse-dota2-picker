@@ -108,7 +108,7 @@ const state = {
   allyPos: [null, null, null, null, null],
   enemyManual: [false, false, false, false, false], // позицию задал пользователь
   allyManual: [false, false, false, false, false],
-  pickPos: 'auto',   // для какой позиции подбираем героя: 'auto' | 0 (любая) | 1–5
+  pickPos: 0,        // для какой позиции подбираем героя: 0 (любая — чистый контрпик) | 1–5
   ban: [],
   mode: 'enemy',
   tab: 'best',
@@ -306,12 +306,29 @@ function setPosition(side, i, p) {
   changed();
 }
 
-// Для какой позиции сейчас подбираем: «авто» = первая свободная в вашей команде
+// Для какой позиции сейчас подбираем (null — любая, чистый контрпик)
 function targetPos() {
-  if (state.pickPos !== 'auto') return state.pickPos || null;
-  const used = new Set(state.allyPos.filter((p, i) => p && state.ally[i]));
-  if (state.ally.filter(Boolean).length >= 5) return null;
-  return [1, 2, 3, 4, 5].find((p) => !used.has(p)) || null;
+  return state.pickPos || null;
+}
+
+// Мета позиции: винрейт героя на линии этой позиции в текущем патче (Dotabuff)
+const META_WEIGHT = 0.5; // контрпик важнее: мета даёт максимум ±2–3%, контрпик против пятёрки — до ±10%
+function posMeta(key, P) {
+  if (!P) return null;
+  const lanes = state.dotabuff && state.dotabuff.lanes && state.dotabuff.lanes[key];
+  const lane = { 1: 'safe', 5: 'safe', 2: 'mid', 3: 'off', 4: 'off' }[P];
+  let row = lanes && lanes[lane];
+  if (P === 4 && lanes && lanes.roaming && (!row || lanes.roaming[0] > row[0])) row = lanes.roaming;
+  if (!row) return null;
+  // редкие офф-пики на позиции (Lycan мид и т. п.) играют в основном спецы — их винрейт завышен,
+  // поэтому вес меты растёт с долей игр героя на этой позиции (полный — от 40%)
+  const conf = Math.min(1, posShares(key)[P] / 0.4);
+  return { wr: row[1], delta: (row[1] - 50) * conf, conf };
+}
+
+function totalScore(key, P) {
+  const m = posMeta(key, P);
+  return scoreFor(key, P) + (m ? META_WEIGHT * m.delta : 0);
 }
 
 function enemyWeight(ek, P) {
@@ -485,7 +502,7 @@ function tile(h, matches, first, res) {
   else if (state.ban.includes(h.key)) cls.push('taken');
   else if (res) {
     const P = targetPos();
-    const s = scoreFor(h.key, P);
+    const s = totalScore(h.key, P);
     const n = state.enemy.filter(Boolean).length;
     if (s >= 1.5 * n) cls.push('great'); else if (s >= 0.6 * n) cls.push('good'); else if (s <= -0.6 * n) cls.push('bad');
     if (P && posShares(h.key)[P] < MIN_POS_SHARE) cls.push('offpos');
@@ -506,15 +523,13 @@ function renderRoleFilter() {
 }
 
 function renderPosFilter() {
-  const P = targetPos();
-  const autoLabel = state.pickPos === 'auto' ? (P ? `Авто → ${P}` : 'Авто') : 'Авто';
   const btn = (v, label, title) =>
-    `<button class="${String(state.pickPos) === String(v) ? 'active' : ''}" data-pickpos="${v}" title="${esc(title)}">${label}</button>`;
+    `<button class="${state.pickPos === v ? 'active' : ''}" data-pickpos="${v}" title="${esc(title)}">${label}</button>`;
   $('#pos-filter').innerHTML =
     `<span class="pos-label">Пикаю на</span><div class="seg small">` +
-    btn('auto', autoLabel, 'Первая свободная позиция в вашей команде') +
-    [1, 2, 3, 4, 5].map((p) => btn(p, p, `Позиция ${p} · ${POS_NAMES[p]}`)).join('') +
-    btn(0, 'Любая', 'Без учёта позиции') + '</div>';
+    btn(0, 'Любая', 'Чистый контрпик, без учёта позиции') +
+    [1, 2, 3, 4, 5].map((p) => btn(p, `${p} · ${POS_NAMES[p]}`, `Только герои позиции ${p}: контрпик + мета позиции`)).join('') +
+    '</div>';
 }
 
 function renderPicks() {
@@ -522,63 +537,81 @@ function renderPicks() {
   renderRoleFilter();
   const body = $('#picks-body');
   const res = state.results;
-  if (!res) {
+  const P = targetPos();
+  if (!res && !P) {
     body.innerHTML = `<div class="empty-state">
       <h3>Выберите героев противника</h3>
       <p>Кликните по портрету или начните печатать имя — <kbd>Enter</kbd> добавит первого найденного.</p>
       <p>Сокращения работают: <code>am</code>, <code>qop</code>, <code>sf</code>, <code>wk</code>…</p>
+      <p>Выберите позицию выше («Пикаю на») — увидите мету этой позиции ещё до пика врагов.</p>
     </div>`;
     return;
   }
 
   const busy = taken();
-  const P = targetPos();
   let list = state.heroes.filter((h) => !busy.has(h.key));
   if (P) list = list.filter((h) => posShares(h.key)[P] >= MIN_POS_SHARE);
   if (state.roles.size) list = list.filter((h) => [...state.roles].every((r) => h.roles.includes(r)));
   if (state.attr) list = list.filter((h) => h.attr === state.attr);
-  const score = new Map(list.map((h) => [h.key, scoreFor(h.key, P)]));
-  list.sort((a, b) => (state.tab === 'best' ? 1 : -1) * (score.get(b.key) - score.get(a.key)));
+  // итог = контрпик (если враги выбраны) + мета позиции (если позиция выбрана)
+  const parts = new Map(list.map((h) => {
+    const counter = res ? scoreFor(h.key, P) : 0;
+    const meta = posMeta(h.key, P);
+    const metaPts = meta ? META_WEIGHT * meta.delta : 0;
+    return [h.key, { counter, meta, metaPts, total: counter + metaPts }];
+  }));
+  list.sort((a, b) => (state.tab === 'best' ? 1 : -1) * (parts.get(b.key).total - parts.get(a.key).total));
 
   const limit = state.showAll ? list.length : 25;
-  const max = Math.max(1, ...list.map((h) => Math.abs(score.get(h.key))));
+  const max = Math.max(1, ...list.map((h) => Math.abs(parts.get(h.key).total)));
 
   if (!list.length) {
     body.innerHTML = '<div class="empty-state"><p>Нет героев под выбранные фильтры.</p></div>';
     return;
   }
 
-  body.innerHTML = list.slice(0, limit).map((h, i) => {
-    const r = res.get(h.key);
-    const s = score.get(h.key);
-    const sub = P ? `поз. ${P}: ${Math.round(posShares(h.key)[P] * 100)}% игр` : h.roles.slice(0, 3).map((x) => ROLES[x] || x).join(' · ');
-    const vs = r.vs.map((v) => {
+  const head = !res
+    ? `<div class="picks-note">Мета позиции ${P} (${POS_NAMES[P]}) в текущем патче — винрейт героев на этой позиции. Добавьте врагов, чтобы учесть контрпик.</div>`
+    : P ? `<div class="picks-note">Позиция ${P}: только герои, которые её играют. Итог = контрпик + мета позиции (вес меты ×${META_WEIGHT} — контрпик важнее).</div>`
+    : '';
+
+  body.innerHTML = head + list.slice(0, limit).map((h, i) => {
+    const r = res && res.get(h.key);
+    const p = parts.get(h.key);
+    const s = p.total;
+    const sub = P ? `поз. ${P}: ${Math.round(posShares(h.key)[P] * 100)}% игр героя` : h.roles.slice(0, 3).map((x) => ROLES[x] || x).join(' · ');
+    const vs = r ? r.vs.map((v) => {
       const e = hero(v.key);
       const lane = enemyWeight(v.key, P) > 1;
       const title = v.adv === null ? `${e.name}: нет данных`
         : `${e.name}: ${fmt(v.adv)}%` + (v.wr != null ? `, винрейт ${v.wr.toFixed(1)}%` : '') + (v.games ? `, ${v.games.toLocaleString('ru')} матчей` : '') +
           (lane ? ' · стоит против вас на линии (×1.5)' : '');
       return `<span class="vs ${lane ? 'lane' : ''}" title="${esc(title)}"><img src="${e.icon || e.img}" alt=""><span class="${v.adv === null ? 'zero' : sign(v.adv)}">${v.adv === null ? '—' : fmt(v.adv)}</span></span>`;
-    }).join('');
+    }).join('') : '';
+    // почему герой в списке: контрпик и мета отдельно
+    const why = [
+      res ? `<span class="why ${sign(p.counter)}" title="Сумма преимуществ против выбранных врагов">контрпик ${fmt(p.counter)}</span>` : '',
+      p.meta ? `<span class="why ${sign(p.metaPts)}" title="Винрейт героя на позиции ${P} в патче: ${p.meta.wr.toFixed(1)}%">мета ${fmt(p.metaPts)} · WR ${p.meta.wr.toFixed(1)}%</span>` : '',
+    ].filter(Boolean).join('');
     const pct = Math.round((Math.abs(s) / max) * 100);
     const color = s >= 0 ? 'var(--good)' : 'var(--bad)';
-    return `<div class="pick" data-pick="${h.key}" title="Клик — добавить в свою команду">
+    return `<div class="pick" data-pick="${h.key}" title="Клик — добавить в свою команду${P ? ' на позицию ' + P : ''}">
       <span class="pick-rank">${i + 1}</span>
       <img class="pick-img" src="${h.img}" alt="" loading="lazy">
       <div class="pick-main">
         <div class="pick-name">${esc(h.name)}<small>${esc(sub)}</small></div>
-        <div class="pick-vs">${vs}</div>
+        ${why ? `<div class="pick-why">${why}</div>` : ''}
+        ${vs ? `<div class="pick-vs">${vs}</div>` : ''}
       </div>
       <div class="pick-score">
-        <b class="${sign(s)}">${fmt(s)}%</b>
-        <small>${r.wr != null ? 'WR ' + r.wr.toFixed(1) + '%' : ''}</small>
+        <b class="${sign(s)}">${fmt(s)}${res ? '%' : ''}</b>
+        <small>${r && r.wr != null ? 'WR vs врагов ' + r.wr.toFixed(1) + '%' : ''}</small>
         <div class="bar"><span style="width:${pct}%;background:${color}"></span></div>
       </div>
     </div>`;
   }).join('') + (list.length > limit
     ? `<button class="btn ghost more" id="show-all">Показать всех (${list.length})</button>` : '');
 }
-
 function renderSource() {
   $$('#source-switch button').forEach((b) => {
     b.classList.toggle('active', b.dataset.source === state.source);
@@ -687,7 +720,7 @@ function bind() {
   $('#pos-filter').addEventListener('click', (ev) => {
     const b = ev.target.closest('[data-pickpos]');
     if (!b) return;
-    state.pickPos = b.dataset.pickpos === 'auto' ? 'auto' : +b.dataset.pickpos;
+    state.pickPos = +b.dataset.pickpos;
     state.showAll = false;
     renderPool();
     renderPicks();
@@ -727,7 +760,7 @@ function bind() {
     state.enemyManual = [false, false, false, false, false];
     state.allyManual = [false, false, false, false, false];
     state.ban = [];
-    state.pickPos = 'auto';
+    state.pickPos = 0;
     search.value = state.query = '';
     changed();
     toast('Драфт очищен');
