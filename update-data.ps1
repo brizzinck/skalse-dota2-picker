@@ -1,18 +1,19 @@
-﻿<#
-  Автоматическое обновление data.js с Dotabuff.
+<#
+  Updates data.js from Dotabuff on Windows.
 
-  Запускает невидимый (headless) Microsoft Edge, открывает dotabuff.com и выполняет там
-  scraper.js через DevTools-протокол. Запросы идут из настоящего браузера, поэтому
-  Cloudflare их пропускает. data.js перезаписывается только если данные собраны успешно.
+  Starts a headless Microsoft Edge, opens dotabuff.com and runs scraper.js there through the
+  DevTools protocol. Requests come from a real browser on your machine, so Cloudflare lets them
+  through. data.js is overwritten only when the data was collected successfully.
 
-  Запуск вручную:   powershell -ExecutionPolicy Bypass -File update-data.ps1
-  Период Dotabuff:  ... -File update-data.ps1 -Date week
-  Автозапуск:       install-autoupdate.ps1
+  Run manually:      powershell -ExecutionPolicy Bypass -File update-data.ps1
+  Dotabuff period:   ... -File update-data.ps1 -Date week
+  Commit and push:   ... -File update-data.ps1 -Push     (keeps the GitHub Pages site up to date)
+  Schedule it:       install-autoupdate.ps1
 #>
 param(
   [string]$Date = '',
   [int]$Port = 9333,
-  [int]$TimeoutSec = 900
+  [switch]$Push
 )
 
 $ErrorActionPreference = 'Stop'
@@ -34,7 +35,7 @@ $edge = @(
   "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe",
   "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe"
 ) | Where-Object { Test-Path $_ } | Select-Object -First 1
-if (-not $edge) { Log 'ОШИБКА: Microsoft Edge не найден'; exit 1 }
+if (-not $edge) { Log 'ERROR: Microsoft Edge not found'; exit 1 }
 
 $profileDir = Join-Path $env:LOCALAPPDATA 'DotaBuffCP\edge-profile'
 New-Item -ItemType Directory -Force $profileDir | Out-Null
@@ -43,7 +44,7 @@ $ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like
 $edgeArgs = @('--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
   "--remote-debugging-port=$Port", "--user-data-dir=`"$profileDir`"", "--user-agent=`"$ua`"", 'about:blank')
 
-Log 'Запуск обновления данных Dotabuff'
+Log 'Updating Dotabuff data'
 $proc = Start-Process $edge -ArgumentList $edgeArgs -PassThru -WindowStyle Hidden
 $ws = $null
 $cancel = [Threading.CancellationToken]::None
@@ -82,8 +83,9 @@ function Eval-Js([string]$expr, [bool]$await = $false) {
   return $r['result']['value']
 }
 
+$ok = $false
 try {
-  # ждём DevTools
+  # wait for DevTools
   $page = $null
   for ($i = 0; $i -lt 40 -and -not $page; $i++) {
     Start-Sleep -Milliseconds 500
@@ -92,51 +94,73 @@ try {
       $page = $targets | ForEach-Object { $_ } | Where-Object { $_.type -eq 'page' } | Select-Object -First 1
     } catch { }
   }
-  if (-not $page) { throw 'Edge не открыл DevTools-порт' }
+  if (-not $page) { throw 'Edge did not open the DevTools port' }
 
   $ws = New-Object System.Net.WebSockets.ClientWebSocket
   $ws.ConnectAsync([Uri]$page.webSocketDebuggerUrl, $cancel).Wait()
 
   Send-Cdp 'Page.navigate' @{ url = 'https://www.dotabuff.com/heroes' } | Out-Null
 
-  # ждём загрузку страницы (и возможную проверку Cloudflare)
+  # wait for the page (and a possible Cloudflare check)
   $ready = $false
   for ($i = 0; $i -lt 60; $i++) {
     Start-Sleep -Seconds 1
     $st = Eval-Js 'document.readyState + "|" + document.title'
     if ($st -like 'complete|*DOTABUFF*') { $ready = $true; break }
   }
-  if (-not $ready) { throw "Dotabuff не открылся (последнее состояние: $st)" }
-  Log 'Dotabuff открыт, собираю контрпики…'
+  if (-not $ready) { throw "Dotabuff did not open (last state: $st)" }
+  Log 'Dotabuff is open, collecting data...'
 
   $scraper = Get-Content (Join-Path $root 'scraper.js') -Raw -Encoding UTF8
   $dateJs = $json.Serialize($Date)
   $expr = "window.DBCP_NO_AUTORUN = true;`n$scraper`n;dbcpScrape({ download: false, date: $dateJs }).then(d => JSON.stringify(d))"
 
-  # awaitPromise: Edge сам дождётся окончания сбора
+  # awaitPromise: Edge waits until the collection finishes
   $resultJson = Eval-Js $expr $true
 
   $data = $json.DeserializeObject($resultJson)
   $heroCount = $data['m'].Count
-  if ($heroCount -lt 100) { throw "Собрано слишком мало героев ($heroCount) — data.js не изменён" }
+  if ($heroCount -lt 100) { throw "Too few heroes collected ($heroCount) - data.js left unchanged" }
 
   $tmp = "$dataFile.tmp"
   [IO.File]::WriteAllText($tmp, "window.DBCP_DATA = $resultJson;`n", (New-Object Text.UTF8Encoding $false))
   Move-Item $tmp $dataFile -Force
 
   $failed = @($data['failed'])
-  Log ("Готово: {0} героев, дата {1}{2}" -f $heroCount, $data['updated'],
-    $(if ($failed.Count) { ", проблемы: $($failed -join ', ')" } else { '' }))
-  exit 0
+  $problems = if ($failed.Count) { ", problems: $($failed -join ', ')" } else { '' }
+  Log ("Done: {0} heroes, {1}, {2}{3}" -f $heroCount, $data['period'], $data['updated'], $problems)
+  $ok = $true
 }
 catch {
-  Log "ОШИБКА: $($_.Exception.Message)"
-  exit 1
+  Log "ERROR: $($_.Exception.Message)"
 }
 finally {
   if ($ws) { try { $ws.Dispose() } catch { } }
   if ($proc -and -not $proc.HasExited) {
-    # закрываем Edge вместе с дочерними процессами
+    # close Edge together with its child processes
     & taskkill /PID $proc.Id /T /F | Out-Null
   }
 }
+if (-not $ok) { exit 1 }
+
+# ---- optional: commit data.js and push it so the GitHub Pages site gets the fresh data ----
+if ($Push) {
+  $git = @("$env:LOCALAPPDATA\MinGit\cmd\git.exe", (Get-Command git -ErrorAction SilentlyContinue).Source) |
+    Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+  if (-not $git) { Log 'ERROR: git not found - cannot push'; exit 1 }
+  Push-Location $root
+  try {
+    & $git pull --rebase --autostash -q 2>&1 | Out-Null
+    & $git add data.js
+    & $git diff --cached --quiet
+    if ($LASTEXITCODE -ne 0) {
+      & $git -c user.name=lavrishkovlad -c user.email=lavrishkovlad@gmail.com commit -q -m ("Update Dotabuff data {0:yyyy-MM-dd}" -f (Get-Date))
+      & $git push -q 2>&1 | Out-Null
+      if ($LASTEXITCODE -ne 0) { Log 'ERROR: git push failed'; exit 1 }
+      Log 'Pushed data.js to GitHub'
+    } else {
+      Log 'data.js unchanged - nothing to push'
+    }
+  } finally { Pop-Location }
+}
+exit 0

@@ -1,29 +1,31 @@
 'use strict';
 /*
- * Билды для героев вашей команды: что собирать, к какой минуте и что против кого.
+ * Item builds for your team: what to buy, by which minute and what to buy against whom.
  *
- *   • какие предметы герой реально собирает  — Dotabuff /heroes/<hero>/items (текущий патч)
- *   • к какой минуте их покупают              — OpenDota /scenarios/itemTimings
- *   • что брать против конкретных врагов      — knowledge.js (угрозы героев → контр-предметы)
+ *   • what the hero actually builds          — Dotabuff /heroes/<hero>/items (current patch, all games)
+ *   • what top players build on a position   — Dotabuff /heroes/<hero>/guides (lane + role → position)
+ *   • purchase timings                       — Dotabuff Guides, OpenDota /scenarios/itemTimings, GPM estimate
+ *   • what to buy against specific enemies   — knowledge.js (hero threats → counter-items)
  *
- * Использует глобальные state/hero/cachedJson/... из app.js (вызывается после его загрузки).
+ * Uses globals from app.js (state, hero, cachedJson, store, t, …); only called after app.js has loaded.
  */
 
-const POS_NAMES = { 1: 'Керри', 2: 'Мид', 3: 'Оффлейн', 4: 'Саппорт 4', 5: 'Саппорт 5' };
 const POS_GPM = { 1: 620, 2: 580, 3: 480, 4: 340, 5: 290 };
-// кто против кого стоит на линии: моя позиция → позиции врагов
+// lane opponents: my position → enemy positions
 const LANE_FOES = { 1: [3, 4], 5: [3, 4], 2: [2], 3: [1, 5], 4: [1, 5] };
-const GUIDE_MIN = 10; // столько матчей топ-игроков на позиции нужно, чтобы строить билд по ним
+const GUIDE_MIN = 10; // top-player matches on a position required to build from guides alone
 const BOOTS = new Set(['boots', 'phase_boots', 'power_treads', 'arcane_boots', 'tranquil_boots', 'boots_of_bearing', 'guardian_greaves', 'travel_boots']);
+const SUPPORT_LATE_OK = ['ultimate_scepter', 'aghanims_shard', 'sheepstick', 'refresher', 'octarine_core', 'wind_waker'];
+
+const posName = (p) => t('pos.' + p);
 
 const builds = {
   items: null,          // key -> {name, cost, img, neutral, components}
   byName: new Map(),    // norm(dname) -> key
   timings: new Map(),   // heroKey -> Map(item -> {median, early, late, games})
-  odPopularity: new Map(),
 };
 
-/* ---------- справочник предметов (OpenDota constants, кэш неделя) ---------- */
+/* ---------- item constants (OpenDota, cached for a week) ---------- */
 
 async function loadItemConsts() {
   if (builds.items) return builds.items;
@@ -56,7 +58,7 @@ async function loadItemConsts() {
 
 const itemKeyByName = (name) => builds.byName.get(norm(String(name).replace(/\s*\(level \d+\)/i, '')));
 
-/* ---------- тайминги предметов (OpenDota, кэш сутки) ---------- */
+/* ---------- purchase timings (OpenDota, cached for a day) ---------- */
 
 async function loadTimings(heroKey) {
   if (builds.timings.has(heroKey)) return builds.timings.get(heroKey);
@@ -92,7 +94,7 @@ async function loadTimings(heroKey) {
   return out;
 }
 
-/* ---------- статистика предметов героя ---------- */
+/* ---------- hero item statistics ---------- */
 
 async function heroItemStats(heroKey) {
   const d = state.dotabuff;
@@ -102,17 +104,16 @@ async function heroItemStats(heroKey) {
       .map(([name, matches, wr]) => ({ key: itemKeyByName(name), matches, wr, share: games ? matches / games : null }))
       .filter((x) => x.key);
   }
-  // запасной вариант: OpenDota itemPopularity (матчи высокого уровня)
+  // fallback: OpenDota itemPopularity (high-level matches only)
   const h = hero(heroKey);
   if (!h || !h.id) return [];
   const pop = await cachedJson(`${OD_API}/heroes/${h.id}/itemPopularity`, DAY);
-  const ids = new Map(Object.entries(builds.items).map(([k]) => [k, k]));
-  const counts = new Map();
   const idToKey = await itemIdMap();
+  const counts = new Map();
   for (const phase of ['early_game_items', 'mid_game_items', 'late_game_items']) {
     for (const [id, n] of Object.entries(pop[phase] || {})) {
       const k = idToKey.get(+id);
-      if (k && ids.has(k)) counts.set(k, (counts.get(k) || 0) + n);
+      if (k && builds.items[k]) counts.set(k, (counts.get(k) || 0) + n);
     }
   }
   const max = Math.max(1, ...counts.values());
@@ -127,13 +128,13 @@ async function itemIdMap() {
   return idMapCache;
 }
 
-/* ---------- сборка рекомендаций ---------- */
+/* ---------- building recommendations ---------- */
 
 function laneGpm(heroKey, pos) {
   const lanes = state.dotabuff && state.dotabuff.lanes && state.dotabuff.lanes[heroKey];
   const lane = { 1: 'safe', 5: 'safe', 2: 'mid', 3: 'off', 4: 'off' }[pos];
   const g = lanes && lanes[lane] && lanes[lane][2];
-  // GPM линии смешивает кора и саппорта — берём его только если он похож на позицию
+  // lane GPM mixes cores and supports — use it only when it looks like the position
   if (g && (pos <= 3 ? g >= 400 : g < 430)) return g;
   return POS_GPM[pos];
 }
@@ -142,26 +143,26 @@ function enemyTeam() {
   return state.enemy.map((k, i) => (k ? { key: k, pos: state.enemyPos[i] } : null)).filter(Boolean);
 }
 
-// Билд по гайдам Dotabuff (матчи топ-игроков) именно для этой позиции героя
+// Dotabuff Guides (top-player matches) for this hero on this exact position
 function guideFor(heroKey, pos) {
   const g = state.dotabuff && state.dotabuff.guides && state.dotabuff.guides[heroKey];
   const p = g && pos && g[pos];
   if (!p || !p.n) return null;
   const list = Object.entries(p.items)
-    .map(([name, [cnt, t]]) => ({ key: itemKeyByName(name), cnt, share: cnt / p.n, median: t / 60 }))
+    .map(([name, [cnt, sec]]) => ({ key: itemKeyByName(name), cnt, share: cnt / p.n, median: sec / 60 }))
     .filter((x) => x.key && builds.items[x.key]);
   return { n: p.n, w: p.w, list };
 }
 
-// Уместен ли предмет на позиции. Правило ITEM_POS снимается, если топ-игроки
-// реально собирают этот предмет на этом герое на этой позиции (≥20% матчей).
+// Does the item make sense on this position? The ITEM_POS rule is lifted when top players
+// actually build the item on this hero in this position (≥2 matches and ≥20%).
 function itemFitsPos(key, pos, guide) {
   const rule = window.DBCP_KB.ITEM_POS[key];
   if (!rule || !pos || rule.includes(pos)) return true;
   return !!(guide && guide.n >= 5 && guide.list.some((x) => x.key === key && x.cnt >= 2 && x.share >= 0.2));
 }
 
-// Насколько герой «сам по себе» собирает предмет: доля матчей по гайдам позиции, иначе общая статистика
+// How often the hero builds the item: share of guide matches on the position, else patch statistics
 function ownShare(key, stats, guide) {
   if (guide && guide.n >= 3) {
     const g = guide.list.find((x) => x.key === key);
@@ -172,7 +173,7 @@ function ownShare(key, stats, guide) {
 }
 
 function counterItemsFor(heroKey, pos, stats, guide) {
-  const { THREATS, COUNTER_ITEMS, ATTACK_ITEMS, THREAT_INFO } = window.DBCP_KB;
+  const { THREATS, COUNTER_ITEMS, ATTACK_ITEMS } = window.DBCP_KB;
   const cls = pos && pos >= 4 ? 'support' : 'core';
   const foes = pos ? LANE_FOES[pos] : [];
   const acc = new Map();
@@ -187,11 +188,11 @@ function counterItemsFor(heroKey, pos, stats, guide) {
         if (ATTACK_ITEMS.has(ci.item) && ownShare(ci.item, stats, guide) < 0.01) continue;
         let w = ci.p * (laneFoe ? 1.3 : 1);
         if (['physical', 'evasion', 'passive'].includes(threat) && e.pos && e.pos <= 2) w *= 1.3;
-        const a = acc.get(ci.item) || { item: ci.item, score: 0, vs: new Map(), reasons: new Set(), threats: new Set() };
+        const a = acc.get(ci.item) || { item: ci.item, score: 0, vs: new Map(), reasons: [], threats: new Set() };
         a.score += w;
         a.vs.set(e.key, (a.vs.get(e.key) || 0) + w);
-        a.reasons.add(ci.why);
-        a.threats.add(THREAT_INFO[threat].name);
+        if (!a.reasons.includes(ci.why)) a.reasons.push(ci.why);
+        a.threats.add(threat);
         acc.set(ci.item, a);
       }
     }
@@ -199,15 +200,14 @@ function counterItemsFor(heroKey, pos, stats, guide) {
   return [...acc.values()]
     .filter((a) => builds.items[a.item])
     .map((a) => {
-      const share = ownShare(a.item, stats, guide);
-      if (share >= 0.03) a.score *= 1.4;
+      if (ownShare(a.item, stats, guide) >= 0.03) a.score *= 1.4;
       a.own = stats.find((x) => x.key === a.item) || null;
       return a;
     })
     .sort((a, b) => b.score - a.score);
 }
 
-// Шаг 1: данные по герою (без учёта того, что берут союзники)
+// Step 1: per-hero data (independent of what allies buy)
 async function prepareBuild(heroKey, pos) {
   await loadItemConsts();
   const [stats, timings] = await Promise.all([heroItemStats(heroKey), loadTimings(heroKey)]);
@@ -221,7 +221,7 @@ async function prepareBuild(heroKey, pos) {
   };
 }
 
-// Шаг 2: таймлайн. banned — командные предметы, которые отданы другому союзнику.
+// Step 2: the timeline. banned — team items assigned to another ally.
 function finalizeBuild(b, banned) {
   const { SKIP_ITEMS, SUPPORT_ITEMS, CORE_ITEMS } = window.DBCP_KB;
   const items = builds.items;
@@ -232,13 +232,13 @@ function finalizeBuild(b, banned) {
   const fits = (k) => itemFitsPos(k, b.pos, b.guide) && !banned.has(k);
   const classOk = (k) => {
     const it = items[k];
-    // если топ-игроки на этой позиции реально так собирают — не спорим
+    // if top players on this position really build it — don't argue
     if (b.guide && b.guide.n >= 5 && b.guide.list.some((x) => x.key === k && x.cnt >= 2)) return true;
-    if (b.cls === 'support') return !CORE_ITEMS.has(k) && (it.cost <= 5000 || ['ultimate_scepter', 'aghanims_shard', 'sheepstick', 'refresher', 'octarine_core', 'wind_waker'].includes(k));
+    if (b.cls === 'support') return !CORE_ITEMS.has(k) && (it.cost <= 5000 || SUPPORT_LATE_OK.includes(k));
     return !(SUPPORT_ITEMS.has(k) && !BOOTS.has(k));
   };
 
-  // общая статистика героя, отфильтрованная под позицию
+  // patch-wide hero statistics filtered for the position
   const ok = b.stats.filter((s) => valid(s.key) && fits(s.key) && classOk(s.key));
   const isComponent = (s) => ok.some((o) => o.key !== s.key && items[o.key].components.includes(s.key) && o.matches >= s.matches * 0.5);
   const early = ok
@@ -246,7 +246,7 @@ function finalizeBuild(b, banned) {
     .slice(0, 3)
     .map((s) => ({ ...s, phase: 'early' }));
 
-  // медианное время покупки по гайдам этой позиции (если предмет встретился хотя бы в 2 матчах)
+  // median purchase time on this position from guides (item seen in at least 2 matches)
   const guideTime = (k) => {
     const g = b.guide && b.guide.list.find((x) => x.key === k && x.cnt >= 2);
     return g ? g.median : null;
@@ -254,8 +254,8 @@ function finalizeBuild(b, banned) {
 
   let main, source;
   if (b.guide && b.guide.n >= GUIDE_MIN) {
-    // на позиции достаточно матчей топ-игроков: состав и порядок — по ним (предметы из ≥25% матчей),
-    // популярность и винрейт — по всему патчу
+    // enough top-player matches on the position: items (≥25% of matches) and order come from them,
+    // popularity and win rate — from the whole patch
     source = 'guides';
     main = b.guide.list
       .filter((x) => valid(x.key) && fits(x.key) && x.share >= 0.25 && !early.some((e) => e.key === x.key))
@@ -270,13 +270,13 @@ function finalizeBuild(b, banned) {
         };
       });
   } else {
-    // мало матчей на этой позиции: предметы — статистика всего патча, отфильтрованная правилами позиции
+    // few matches on this position: patch-wide statistics filtered by the position rules
     source = 'stats';
-    // если на позиции есть хотя бы 5 матчей топ-игроков — сначала предметы, которые они там реально брали
+    // with at least 5 guide matches, items top players actually bought there go first
     const inGuides = (k) => !!(b.guide && b.guide.n >= 5 && b.guide.list.some((x) => x.key === k));
     const byAffinity = [...ok].sort((x, y) => (inGuides(y.key) - inGuides(x.key)) || (y.matches - x.matches));
     const boots = byAffinity.find((s) => BOOTS.has(s.key) && s.key !== 'boots' && s.key !== 'travel_boots');
-    // сильный сигнал: предмет у топ-игроков на позиции минимум в 3 матчах и ≥40% — берём обязательно
+    // strong signal: in ≥3 guide matches and ≥40% on this position — always included
     const strong = b.guide && b.guide.n >= 5
       ? b.guide.list
         .filter((x) => x.cnt >= 3 && x.share >= 0.4 && valid(x.key) && fits(x.key) && items[x.key].cost >= 1100 && !BOOTS.has(x.key))
@@ -296,37 +296,37 @@ function finalizeBuild(b, banned) {
       if (tx != null && ty != null && tx !== ty) return tx - ty;
       return items[x.key].cost - items[y.key].cost;
     }).map((s) => ({ ...s, counter: counterOf.get(s.key) || null }));
-    // время: по гайдам этой позиции → по OpenDota (если < 25 мин) → расчёт по GPM на позиции
+    // time: guides for this position → OpenDota (if < 25 min) → GPM estimate for the position
     let spent = early.reduce((sum, s) => sum + items[s.key].cost, 0), last = 0;
     for (const s of main) {
       spent += items[s.key].cost;
       const est = spent / b.gpm + 1;
-      const t = b.timings.get(s.key);
+      const tm = b.timings.get(s.key);
       const g = guideTime(s.key);
-      s.real = g != null || !!(t && t.median < 25);
-      s.eta = Math.max(last, g != null ? g : s.real ? Math.min(t.median, est * 1.25) : est);
-      s.timing = t || null;
+      s.real = g != null || !!(tm && tm.median < 25);
+      s.eta = Math.max(last, g != null ? g : s.real ? Math.min(tm.median, est * 1.25) : est);
+      s.timing = tm || null;
       last = s.eta;
     }
   }
 
-  // два лучших контр-предмета, которых ещё нет в билде, — «после первого корового предмета»
+  // the two best counter-items not yet in the build — "after your first core item"
   const first = main.find((m) => items[m.key].cost >= 1100 && !BOOTS.has(m.key));
   const base = first ? first.eta : 10;
   const extra = counters
     .filter((c) => !main.some((m) => m.key === c.item) && !SKIP_ITEMS.has(c.item) && items[c.item].cost >= 1000)
     .slice(0, 2)
     .map((c) => {
-      const t = b.timings.get(c.item);
+      const tm = b.timings.get(c.item);
       const s = statOf.get(c.item);
       return {
         key: c.item, counter: c, added: true, wr: s ? s.wr : null, share: s ? s.share : null,
-        real: !!(t && t.median < 25), eta: t && t.median < 25 ? t.median : base + items[c.item].cost / b.gpm, timing: t || null,
+        real: !!(tm && tm.median < 25), eta: tm && tm.median < 25 ? tm.median : base + items[c.item].cost / b.gpm, timing: tm || null,
       };
     });
   main = [...main, ...extra].sort((x, y) => x.eta - y.eta).map((s) => ({ ...s, phase: 'main' }));
 
-  // ETA ранних предметов — по накопленной стоимости
+  // early items: ETA from the accumulated cost
   let spent = 0;
   for (const s of early) { spent += items[s.key].cost; s.eta = spent / b.gpm + 1; s.real = false; }
 
@@ -337,7 +337,7 @@ function finalizeBuild(b, banned) {
   };
 }
 
-// Командные предметы (Vessel, Pipe, Mekansm…) — одному-двум союзникам, кому подходят лучше
+// Team items (Vessel, Pipe, Mekansm…) go to the one or two allies who fit them best
 function allocateTeamItems(list) {
   const { TEAM_ITEMS } = window.DBCP_KB;
   const banned = new Map(list.map((b) => [b, new Set()]));
@@ -345,7 +345,7 @@ function allocateTeamItems(list) {
   for (const [item, rule] of Object.entries(TEAM_ITEMS)) {
     const cands = list.filter((b) => b.counters.some((c) => c.item === item) || ownShare(item, b.stats, b.guide) >= 0.25);
     if (!cands.length) continue;
-    // кто собирает предмет как часть основного билда (≥50% матчей) — у того он и остаётся
+    // whoever builds it as a core item (≥50% of matches) keeps it
     const core = (b) => (b.guide && b.guide.n >= 5 && ownShare(item, b.stats, b.guide) >= 0.5 ? 0 : 1);
     const rank = (b) => { const i = rule.pref.indexOf(b.pos); return i === -1 ? 99 : i; };
     const sc = (b) => (b.counters.find((c) => c.item === item) || { score: 0 }).score + ownShare(item, b.stats, b.guide) * 10;
@@ -357,26 +357,57 @@ function allocateTeamItems(list) {
   return { banned, owner };
 }
 
-/* ---------- рендер ---------- */
+/* ---------- rendering ---------- */
 
 const mmss = (m) => `${Math.round(m)}'`;
+const pct0 = (x) => (x * 100).toFixed(0);
 
 function itemChip(s) {
   const it = builds.items[s.key];
-  const t = s.timing;
+  const tm = s.timing;
   const tip = [
-    it.name + ` — ${it.cost} золота`,
-    s.share != null ? `собирают в ${(s.share * 100).toFixed(0)}% всех игр героя за патч` : '',
-    s.wr != null ? `винрейт с предметом за патч: ${s.wr.toFixed(1)}%` : '',
-    s.guideShare != null ? `у топ-игроков на этой позиции: в ${(s.guideShare * 100).toFixed(0)}% матчей, обычно к ${mmss(s.eta)}` : '',
-    t && t.early != null && t.late != null ? `успел до ${mmss(t.median)}: WR ${t.early.toFixed(0)}% · позже: ${t.late.toFixed(0)}%` : '',
-    s.counter ? 'против: ' + [...s.counter.vs.keys()].map((k) => hero(k).name).join(', ') + ' — ' + [...s.counter.reasons][0] : '',
+    t('item.cost', { name: it.name, cost: it.cost }),
+    s.share != null ? t('item.share', { s: pct0(s.share) }) : '',
+    s.wr != null ? t('item.wr', { wr: s.wr.toFixed(1) }) : '',
+    s.guideShare != null ? t('item.guide', { s: pct0(s.guideShare), t: mmss(s.eta) }) : '',
+    tm && tm.early != null && tm.late != null ? t('item.split', { t: mmss(tm.median), a: tm.early.toFixed(0), b: tm.late.toFixed(0) }) : '',
+    s.counter ? t('item.vs', { names: [...s.counter.vs.keys()].map((k) => hero(k).name).join(', '), why: L(s.counter.reasons[0]) }) : '',
   ].filter(Boolean).join('\n');
   const cls = ['item', s.counter ? 'is-counter' : '', s.added ? 'is-added' : ''].join(' ');
-  return `<div class="${cls}" title="${esc(tip)}">
-    <img src="${it.img}" alt="" loading="lazy">
+  return `<div class="${cls}" title="${esc(tip)}" tabindex="0">
+    <img src="${it.img}" alt="${esc(it.name)}" loading="lazy">
     <span class="item-t">${s.real ? '' : '≈'}${mmss(s.eta)}</span>
     ${s.counter ? '<span class="item-flag" aria-hidden="true">⚑</span>' : ''}
+  </div>`;
+}
+
+function sourceNote(b) {
+  const d = state.dotabuff;
+  const games = d && d.games && d.games[b.heroKey];
+  const patch = d ? periodName(d) : '';
+  const gamesTxt = games
+    ? (games >= 1e6 ? t('games.m', { n: (games / 1e6).toFixed(1) }) : t('games.k', { n: Math.round(games / 1000) }))
+    : t('games.all');
+  const n = b.guide ? b.guide.n : 0;
+  if (b.source === 'guides') return t('build.src.guides', { games: gamesTxt, patch, p: b.pos, n });
+  let s = t('build.src.stats', { games: gamesTxt, patch, p: b.pos || '?' });
+  if (!b.pos) return s + t('build.src.nopos');
+  s += t('build.src.rare', { n });
+  if (n) s += t('build.src.rare.timing');
+  return s;
+}
+
+function counterRow(c, owner) {
+  const it = builds.items[c.item];
+  const team = owner.has(c.item) ? ` <span class="team-tag">${esc(t('team.tag'))}</span>` : '';
+  const wr = c.own && c.own.wr != null ? ` <small class="muted">${esc(t('counter.wr', { wr: c.own.wr.toFixed(1) }))}</small>` : '';
+  return `<div class="counter-row">
+    <img class="counter-img" src="${it.img}" alt="">
+    <div class="counter-main">
+      <div><b>${esc(it.name)}</b>${team}${wr}</div>
+      <div class="muted">${esc(c.reasons.slice(0, 2).map(L).join('; '))}</div>
+    </div>
+    <div class="counter-vs">${[...c.vs.keys()].map((k) => `<img src="${hero(k).icon || hero(k).img}" title="${esc(hero(k).name)}" alt="${esc(hero(k).name)}">`).join('')}</div>
   </div>`;
 }
 
@@ -384,72 +415,67 @@ function buildCard(b, owner) {
   const h = hero(b.heroKey);
   const tl = b.timeline;
   const phases = [
-    { name: 'Линия', list: tl.filter((s) => s.phase === 'early' || s.eta < 10) },
-    { name: 'До 20 минут', list: tl.filter((s) => s.phase === 'main' && s.eta >= 10 && s.eta < 20) },
-    { name: '20–30 минут', list: tl.filter((s) => s.phase === 'main' && s.eta >= 20 && s.eta < 30) },
-    { name: '30–40 минут', list: tl.filter((s) => s.phase === 'main' && s.eta >= 30 && s.eta < 40) },
-    { name: 'Лейт', list: tl.filter((s) => s.phase === 'main' && s.eta >= 40) },
+    { name: t('phase.lane'), list: tl.filter((s) => s.phase === 'early' || s.eta < 10) },
+    { name: t('phase.20'), list: tl.filter((s) => s.phase === 'main' && s.eta >= 10 && s.eta < 20) },
+    { name: t('phase.30'), list: tl.filter((s) => s.phase === 'main' && s.eta >= 20 && s.eta < 30) },
+    { name: t('phase.40'), list: tl.filter((s) => s.phase === 'main' && s.eta >= 30 && s.eta < 40) },
+    { name: t('phase.late'), list: tl.filter((s) => s.phase === 'main' && s.eta >= 40) },
   ].filter((p) => p.list.length);
 
-  const d = state.dotabuff;
-  const games = d && d.games && d.games[b.heroKey];
-  const patch = d ? periodName(d) : 'патч';
-  const gamesTxt = games ? (games >= 1e6 ? (games / 1e6).toFixed(1) + ' млн' : Math.round(games / 1000) + ' тыс.') + ' игр героя' : 'все игры героя';
-  const nG = b.guide ? b.guide.n : 0;
-  const src = b.source === 'guides'
-    ? `Популярность и винрейт — ${gamesTxt} (${patch}). Состав и тайминги для позиции ${b.pos} — ${nG} свежих матчей топ-игроков (~5000+ MMR).`
-    : `Предметы — ${gamesTxt} (${patch}), отфильтрованы под позицию ${b.pos || '?'}.` +
-      (b.pos ? ` На этой позиции герой редкий: всего ${nG} матч(ей) топ-игроков — мало для отдельного билда${nG ? ', тайминги взяты из них где есть' : ''}.` : ' Задайте позицию — билд станет точнее.');
-
   const lane = b.pos ? enemyTeam().filter((e) => e.pos && LANE_FOES[b.pos].includes(e.pos)) : [];
-  const laneHtml = lane.length ? `<div class="build-lane">На линии против: ${lane.map((e) => {
+  const laneHtml = lane.length ? `<div class="build-lane"><span>${esc(t('build.lane'))}</span> ${lane.map((e) => {
     const r = state.results && state.results.get(b.heroKey);
     const v = r && r.vs.find((x) => x.key === e.key);
     const adv = v && v.adv != null ? `<span class="${sign(v.adv)}">${fmt(v.adv)}</span>` : '';
     return `<span class="vs"><img src="${hero(e.key).icon || hero(e.key).img}" alt="">${esc(hero(e.key).name)} ${adv}</span>`;
   }).join(' ')}</div>` : '';
 
-  const counters = b.counters.map((c) => {
-    const it = builds.items[c.item];
-    const team = owner.has(c.item) ? ' <small class="team-tag">на команду</small>' : '';
-    return `<div class="counter-row">
-      <img class="counter-img" src="${it.img}" alt="">
-      <div class="counter-main">
-        <div><b>${esc(it.name)}</b>${team}${c.own && c.own.wr != null ? ` <small class="muted">WR ${c.own.wr.toFixed(1)}%</small>` : ''}</div>
-        <div class="muted">${esc([...c.reasons].slice(0, 2).join('; '))}</div>
-      </div>
-      <div class="counter-vs">${[...c.vs.keys()].map((k) => `<img src="${hero(k).icon || hero(k).img}" title="${esc(hero(k).name)}" alt="">`).join('')}</div>
-    </div>`;
-  }).join('');
+  const top = b.counters.slice(0, 3).map((c) => counterRow(c, owner)).join('');
+  const rest = b.counters.slice(3);
+  const counters = b.counters.length ? `
+    <div class="build-sub">${esc(t('build.vsteam'))}</div>
+    <div class="counters">${top}</div>
+    ${rest.length ? `<details class="more-counters"><summary>${esc(t('build.more', { n: rest.length }))}</summary>
+      <div class="counters">${rest.map((c) => counterRow(c, owner)).join('')}</div></details>` : ''}`
+    : (enemyTeam().length ? '' : `<div class="muted build-hint">${esc(t('build.addenemies'))}</div>`);
 
   return `<article class="build card">
     <header class="build-head">
       <img class="build-hero" src="${h.img}" alt="">
-      <div>
+      <div class="build-title">
         <div class="build-name">${esc(h.name)}</div>
-        <div class="muted">${b.pos ? `Позиция ${b.pos} · ${POS_NAMES[b.pos]}` : 'Позиция не задана'} · ~${Math.round(b.gpm)} GPM</div>
+        <div class="build-meta">
+          ${b.pos ? `<span class="pos-badge pos-${b.pos}">${b.pos}</span>${esc(posName(b.pos))}` : esc(t('build.nopos'))}
+          <span class="dot-sep">·</span>~${Math.round(b.gpm)} GPM
+        </div>
       </div>
     </header>
-    <div class="build-src ${b.source === 'guides' ? '' : 'warn'}">${esc(src)}</div>
+    <p class="build-src ${b.source === 'guides' ? '' : 'warn'}">${esc(sourceNote(b))}</p>
     ${laneHtml}
     <div class="build-timeline">
-      ${phases.map((p) => `<div class="phase"><div class="phase-name">${p.name}</div><div class="phase-items">${p.list.map(itemChip).join('')}</div></div>`).join('')}
+      ${phases.map((p) => `<div class="phase"><div class="phase-name">${esc(p.name)}</div><div class="phase-items">${p.list.map(itemChip).join('')}</div></div>`).join('')}
     </div>
-    ${counters ? `<div class="build-sub">Против этой команды</div><div class="counters">${counters}</div>` :
-      (enemyTeam().length ? '' : '<div class="muted build-sub">Добавьте врагов — появятся контр-предметы.</div>')}
+    ${counters}
   </article>`;
 }
+
+const skeletonCards = (n) => Array.from({ length: n }, () => `<article class="build card skeleton-card">
+  <div class="sk sk-head"></div><div class="sk sk-line"></div><div class="sk sk-row"></div><div class="sk sk-row"></div><div class="sk sk-row short"></div>
+</article>`).join('');
 
 let buildsToken = 0;
 async function renderBuilds() {
   const section = $('#builds');
   const allies = state.ally.map((k, i) => (k ? { key: k, pos: state.allyPos[i] } : null)).filter(Boolean)
     .sort((a, b) => (a.pos || 9) - (b.pos || 9));
+  const jump = $('#jump-builds');
+  if (jump) jump.hidden = !allies.length;
+  document.body.classList.toggle('has-builds', !!allies.length);
   if (!allies.length) { section.hidden = true; return; }
   section.hidden = false;
   const token = ++buildsToken;
   const body = $('#builds-body');
-  if (!body.children.length) body.innerHTML = '<div class="empty-state"><p>Считаю билды…</p></div>';
+  if (!body.querySelector('.build:not(.skeleton-card)')) body.innerHTML = skeletonCards(allies.length);
   try {
     const prepared = await Promise.all(allies.map((a) => prepareBuild(a.key, a.pos)));
     if (token !== buildsToken) return;
@@ -458,6 +484,6 @@ async function renderBuilds() {
   } catch (e) {
     if (token !== buildsToken) return;
     console.error(e);
-    body.innerHTML = `<div class="empty-state"><p>Не удалось загрузить предметы: ${esc(e.message)}</p></div>`;
+    body.innerHTML = `<div class="empty-state"><p>${esc(t('builds.error', { e: e.message }))}</p></div>`;
   }
 }

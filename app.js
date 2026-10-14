@@ -1,23 +1,23 @@
 'use strict';
+/*
+ * Counter Picker — draft, positions and counter-pick suggestions.
+ * Item builds live in builds.js, translations in i18n.js, the knowledge base in knowledge.js.
+ */
 
 const CDN = 'https://cdn.cloudflare.steamstatic.com';
 const OD_API = 'https://api.opendota.com/api';
 const DAY = 864e5;
-const STALE_DAYS = 3; // старше — автоматически переключаемся на OpenDota live
+const STALE_DAYS = 3; // older Dotabuff data → switch to OpenDota live automatically
 
 const ATTRS = [
-  { k: 'str', name: 'Сила', color: 'var(--str)' },
-  { k: 'agi', name: 'Ловкость', color: 'var(--agi)' },
-  { k: 'int', name: 'Интеллект', color: 'var(--int)' },
-  { k: 'all', name: 'Универсальные', color: 'var(--all)' },
+  { k: 'str', color: 'var(--str)' },
+  { k: 'agi', color: 'var(--agi)' },
+  { k: 'int', color: 'var(--int)' },
+  { k: 'all', color: 'var(--all)' },
 ];
+const ROLE_KEYS = ['Carry', 'Support', 'Nuker', 'Disabler', 'Initiator', 'Durable', 'Escape', 'Pusher'];
 
-const ROLES = {
-  Carry: 'Керри', Support: 'Саппорт', Nuker: 'Нюкер', Disabler: 'Контроль',
-  Initiator: 'Инициатор', Durable: 'Танк', Escape: 'Мобильность', Pusher: 'Пуш',
-};
-
-// сокращения и старые имена для поиска (ключ — нормализованное имя)
+// aliases and old names for search (key = normalized hero name)
 const ALIASES = {
   abaddon: ['avernus'], alchemist: ['razzil'], ancientapparition: ['aa', 'kaldr'],
   antimage: ['am', 'magina'], arcwarden: ['aw', 'zet'], beastmaster: ['bm', 'rexxar'],
@@ -53,7 +53,7 @@ const ALIASES = {
   snapfire: ['snap', 'mortimer'], mars: [], marci: [], largo: [],
 };
 
-// нормализация имени: «Nature's Prophet» → naturesprophet, плюс старые названия
+// name normalization: "Nature's Prophet" → naturesprophet, plus renamed heroes
 const NAME_FIX = { outworlddevourer: 'outworlddestroyer', skeletonking: 'wraithking', windrunner: 'windranger' };
 const norm = (s) => {
   const k = String(s).toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -64,7 +64,8 @@ const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmt = (v) => (v > 0 ? '+' : '') + v.toFixed(2);
-const sign = (v) => (v > 0.05 ? 'pos' : v < -0.05 ? 'neg' : 'zero');
+// CSS class for a signed value
+const sign = (v) => (v > 0.05 ? 'up' : v < -0.05 ? 'down' : 'flat');
 
 const store = {
   get(key, fallback = null) {
@@ -90,25 +91,25 @@ async function cachedJson(url, ttl) {
     store.set(key, { t: Date.now(), v });
     return v;
   } catch (e) {
-    if (hit) return hit.v; // офлайн — используем устаревший кэш
+    if (hit) return hit.v; // offline — use the stale cache
     throw e;
   }
 }
 
-/* ===================== состояние ===================== */
+/* ===================== state ===================== */
 
 const state = {
-  heroes: [],        // [{key, id, name, attr, roles, img, wr}]
+  heroes: [],        // [{key, id, name, attr, roles, img, icon, wr}]
   byKey: new Map(),
-  dotabuff: null,    // window.DBCP_DATA или импорт
+  dotabuff: null,    // window.DBCP_DATA or an imported file
   source: 'opendota',
   enemy: [null, null, null, null, null],
   ally: [null, null, null, null, null],
-  enemyPos: [null, null, null, null, null],     // позиции 1–5
+  enemyPos: [null, null, null, null, null],         // positions 1–5
   allyPos: [null, null, null, null, null],
-  enemyManual: [false, false, false, false, false], // позицию задал пользователь
+  enemyManual: [false, false, false, false, false], // position set by the user
   allyManual: [false, false, false, false, false],
-  pickPos: 0,        // для какой позиции подбираем героя: 0 (любая — чистый контрпик) | 1–5
+  pickPos: 0,        // position we pick for: 0 (any — pure counter-pick) | 1–5
   ban: [],
   mode: 'enemy',
   tab: 'best',
@@ -116,14 +117,14 @@ const state = {
   attr: null,
   query: '',
   showAll: false,
-  results: null,     // Map key -> {score, wr, vs:[...]}
+  results: null,     // Map key -> {wr, vs:[...]}
   odMatchups: new Map(),
 };
 
 const hero = (k) => state.byKey.get(k);
 const taken = () => new Set([...state.enemy, ...state.ally, ...state.ban].filter(Boolean));
 
-/* ===================== данные ===================== */
+/* ===================== data ===================== */
 
 async function loadHeroMeta() {
   const list = await cachedJson(OD_API + '/heroStats', DAY);
@@ -139,7 +140,7 @@ async function loadHeroMeta() {
   }));
 }
 
-// data.js грузим сами и в обход кэша — каждый заход получает последние данные с сервера
+// data.js is loaded by us, bypassing the cache — every visit gets the latest data from the server
 function loadDataScript() {
   return new Promise((resolve) => {
     const s = document.createElement('script');
@@ -161,26 +162,27 @@ function pickDotabuffData() {
 
 function periodName(d) {
   const p = d.period || '';
-  if (p.startsWith('patch_')) return 'патч ' + p.slice(6);
-  return { week: 'последняя неделя', month: 'последний месяц', '3month': '3 месяца' }[p] || d.periodLabel || 'все матчи';
+  if (p.startsWith('patch_')) return t('period.patch', { v: p.slice(6) });
+  if (['week', 'month', '3month'].includes(p)) return t('period.' + p);
+  return d.periodLabel || t('period.all');
 }
 
 function parseDataFile(text) {
   const json = text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1);
   const data = JSON.parse(json);
-  if (!data || !data.m || !data.heroes) throw new Error('Неверный формат файла');
+  if (!data || !data.m || !data.heroes) throw new Error(t('err.format'));
   return data;
 }
 
-// OpenDota: матчапы врага против всех героев → преимущество кандидата.
-// Выборка маленькая (матчи высокого уровня), поэтому сглаживаем к нулю.
+// OpenDota: enemy matchups against every hero → the candidate's advantage.
+// Samples are small (high-level matches only), so values are shrunk towards zero.
 async function odMatchupsFor(enemyKey) {
   if (state.odMatchups.has(enemyKey)) return state.odMatchups.get(enemyKey);
   const e = hero(enemyKey);
   const rows = await cachedJson(`${OD_API}/heroes/${e.id}/matchups`, DAY);
   const byId = new Map(state.heroes.map((h) => [h.id, h]));
   const logit = (p) => Math.log(p / (1 - p));
-  // винрейт врага в самой выборке — базовая линия, чтобы не смешивать пабы и high-level
+  // the enemy's win rate in this sample is the baseline (don't mix pubs and high-level games)
   let wins = 0, games = 0;
   for (const r of rows) { wins += r.wins; games += r.games_played; }
   const enemyWr = games ? Math.min(0.9, Math.max(0.1, wins / games)) : e.wr / 100;
@@ -190,7 +192,7 @@ async function odMatchupsFor(enemyKey) {
     if (!c || !r.games_played) continue;
     const candWr = 1 - r.wins / r.games_played;
     const expected = 1 / (1 + Math.exp(-(logit(c.wr / 100) - logit(enemyWr))));
-    // байесовское сглаживание: шум ~50/√n %, реальный эффект матчапа ~±3%
+    // Bayesian shrinkage: noise ~50/√n %, real matchup effects are ~±3%
     const shrink = r.games_played / (r.games_played + 250);
     out[c.key] = [(candWr - expected) * 100 * shrink, candWr * 100, r.games_played];
   }
@@ -209,26 +211,28 @@ async function calculate() {
   const token = ++calcToken;
   if (!enemies.length) { state.results = null; renderAll(); return; }
 
+  // network fetch ahead (OpenDota) — show placeholders meanwhile
+  if (state.source !== 'dotabuff' && enemies.some((k) => !state.odMatchups.has(k))) renderPicksSkeleton();
+
   let tables;
   try {
     tables = await Promise.all(enemies.map(matchupsFor));
   } catch (e) {
-    toast('Не удалось загрузить матчапы: ' + e.message);
+    toast(t('toast.matchups', { e: e.message }));
     return;
   }
   if (token !== calcToken) return;
 
   const results = new Map();
   for (const h of state.heroes) {
-    let score = 0, wrSum = 0, wrN = 0;
+    let wrSum = 0, wrN = 0;
     const vs = enemies.map((ek, i) => {
       const row = tables[i][h.key];
       if (!row) return { key: ek, adv: null };
-      score += row[0];
       wrSum += row[1]; wrN++;
       return { key: ek, adv: row[0], wr: row[1], games: row[2] };
     });
-    results.set(h.key, { score, wr: wrN ? wrSum / wrN : null, vs });
+    results.set(h.key, { wr: wrN ? wrSum / wrN : null, vs });
   }
   state.results = results;
   renderAll();
@@ -241,12 +245,12 @@ function renderAll() {
   renderBuilds();
 }
 
-/* ===================== позиции ===================== */
+/* ===================== positions ===================== */
 
-const MIN_POS_SHARE = 0.1;  // герой «играет» позицию, если ≥10% его игр на ней
-const LANE_WEIGHT = 1.5;    // враг на твоей линии весит больше
+const MIN_POS_SHARE = 0.1;  // a hero "plays" a position if ≥10% of their games are there
+const LANE_WEIGHT = 1.5;    // your lane opponent weighs more
 
-// Доли игр героя по позициям: линии Dotabuff + GPM (на одной линии кор фармит заметно больше саппорта)
+// Hero game share per position: Dotabuff lanes + GPM (on one lane a core farms much more than a support)
 const shareCache = new Map();
 function posShares(key) {
   if (shareCache.has(key)) return shareCache.get(key);
@@ -260,7 +264,7 @@ function posShares(key) {
       else if (lane === 'roaming') s[4] += presence;
     }
   } else {
-    // без данных Dotabuff — грубо по ролям OpenDota
+    // no Dotabuff data — rough guess from OpenDota roles
     const r = (hero(key) || {}).roles || [];
     if (r.includes('Support')) { s[4] += 1; s[5] += 1; }
     if (r.includes('Carry')) { s[1] += 1.5; s[2] += 0.5; }
@@ -274,8 +278,8 @@ function posShares(key) {
   return s;
 }
 
-// Раскладываем героев команды по позициям: заданные вручную остаются,
-// остальные — самая вероятная расстановка (перебор, максимум 5! вариантов).
+// Lay out a team over positions: manual positions stay, the rest get the most likely
+// assignment (brute force, at most 5! permutations).
 function autoAssign(side) {
   const heroes = state[side], pos = state[side + 'Pos'], manual = state[side + 'Manual'];
   heroes.forEach((k, i) => {
@@ -300,19 +304,16 @@ function autoAssign(side) {
 function setPosition(side, i, p) {
   const pos = state[side + 'Pos'], manual = state[side + 'Manual'];
   const other = pos.findIndex((x, j) => j !== i && x === p && state[side][j]);
-  if (other !== -1) manual[other] = false; // освобождаем — его переразложит autoAssign
+  if (other !== -1) manual[other] = false; // free it — autoAssign will place it again
   pos[i] = p;
   manual[i] = true;
   changed();
 }
 
-// Для какой позиции сейчас подбираем (null — любая, чистый контрпик)
-function targetPos() {
-  return state.pickPos || null;
-}
+const targetPos = () => state.pickPos || null;
 
-// Мета позиции: винрейт героя на линии этой позиции в текущем патче (Dotabuff)
-const META_WEIGHT = 0.5; // контрпик важнее: мета даёт максимум ±2–3%, контрпик против пятёрки — до ±10%
+// Position meta: the hero's win rate on that position's lane in the current patch (Dotabuff)
+const META_WEIGHT = 0.5; // counter-picks matter more: meta adds ±2–3% at most, counters vs five heroes up to ±10%
 function posMeta(key, P) {
   if (!P) return null;
   const lanes = state.dotabuff && state.dotabuff.lanes && state.dotabuff.lanes[key];
@@ -320,15 +321,10 @@ function posMeta(key, P) {
   let row = lanes && lanes[lane];
   if (P === 4 && lanes && lanes.roaming && (!row || lanes.roaming[0] > row[0])) row = lanes.roaming;
   if (!row) return null;
-  // редкие офф-пики на позиции (Lycan мид и т. п.) играют в основном спецы — их винрейт завышен,
-  // поэтому вес меты растёт с долей игр героя на этой позиции (полный — от 40%)
+  // rare off-role picks (Lycan mid, …) are played mostly by specialists — their win rate is inflated,
+  // so the meta weight grows with the hero's share of games on the position (full weight from 40%)
   const conf = Math.min(1, posShares(key)[P] / 0.4);
   return { wr: row[1], delta: (row[1] - 50) * conf, conf };
-}
-
-function totalScore(key, P) {
-  const m = posMeta(key, P);
-  return scoreFor(key, P) + (m ? META_WEIGHT * m.delta : 0);
 }
 
 function enemyWeight(ek, P) {
@@ -343,7 +339,25 @@ function scoreFor(key, P) {
   return r.vs.reduce((s, v) => s + (v.adv == null ? 0 : v.adv * enemyWeight(v.key, P)), 0);
 }
 
-/* ===================== действия ===================== */
+function totalScore(key, P) {
+  const m = posMeta(key, P);
+  return scoreFor(key, P) + (m ? META_WEIGHT * m.delta : 0);
+}
+
+/* ===================== actions & undo ===================== */
+
+const DRAFT_KEYS = ['enemy', 'ally', 'enemyPos', 'allyPos', 'enemyManual', 'allyManual', 'ban'];
+const snapshot = () => JSON.stringify(Object.fromEntries(DRAFT_KEYS.map((k) => [k, state[k]])));
+function restore(snap) {
+  Object.assign(state, JSON.parse(snap));
+  changed();
+}
+// run a destructive change and offer "Undo" in the toast
+function undoable(message, fn) {
+  const snap = snapshot();
+  fn();
+  toast(message, { label: t('undo'), fn: () => restore(snap) });
+}
 
 function add(key, side = state.mode) {
   if (!key || !hero(key) || taken().has(key)) return false;
@@ -352,7 +366,7 @@ function add(key, side = state.mode) {
   } else {
     const arr = state[side];
     const i = arr.indexOf(null);
-    if (i === -1) { toast(side === 'enemy' ? 'Все 5 врагов уже выбраны' : 'Ваша команда уже собрана'); return false; }
+    if (i === -1) { toast(t(side === 'enemy' ? 'toast.full.enemy' : 'toast.full.ally')); return false; }
     arr[i] = key;
   }
   changed();
@@ -360,21 +374,39 @@ function add(key, side = state.mode) {
 }
 
 function remove(key) {
-  for (const side of ['enemy', 'ally']) {
-    const i = state[side].indexOf(key);
-    if (i !== -1) { state[side][i] = null; state[side + 'Manual'][i] = false; }
-  }
-  state.ban = state.ban.filter((k) => k !== key);
-  changed();
+  undoable(t('toast.removed', { name: hero(key).name }), () => {
+    for (const side of ['enemy', 'ally']) {
+      const i = state[side].indexOf(key);
+      if (i !== -1) { state[side][i] = null; state[side + 'Manual'][i] = false; }
+    }
+    state.ban = state.ban.filter((k) => k !== key);
+    changed();
+  });
 }
 
 function clearSide(side) {
-  if (side === 'ban') state.ban = [];
-  else {
-    state[side] = [null, null, null, null, null];
-    state[side + 'Manual'] = [false, false, false, false, false];
-  }
-  changed();
+  const empty = side === 'ban' ? !state.ban.length : !state[side].some(Boolean);
+  if (empty) return;
+  undoable(t('toast.cleared'), () => {
+    if (side === 'ban') state.ban = [];
+    else {
+      state[side] = [null, null, null, null, null];
+      state[side + 'Manual'] = [false, false, false, false, false];
+    }
+    changed();
+  });
+}
+
+function resetAll() {
+  if (!taken().size) return;
+  undoable(t('toast.reset'), () => {
+    state.enemy = [null, null, null, null, null];
+    state.ally = [null, null, null, null, null];
+    state.enemyManual = [false, false, false, false, false];
+    state.allyManual = [false, false, false, false, false];
+    state.ban = [];
+    changed();
+  });
 }
 
 function changed() {
@@ -386,7 +418,7 @@ function changed() {
   calculate();
 }
 
-/* ===================== поиск ===================== */
+/* ===================== search ===================== */
 
 function searchRank(h, q) {
   if (!q) return 0;
@@ -415,7 +447,7 @@ function searchMatches() {
 
 function writeHash() {
   const p = [];
-  // герой.позиция — позиция пишется, только если её задали вручную
+  // hero.position — the position is written only when set manually
   const enc = (side) => state[side]
     .map((k, i) => (k ? k + (state[side + 'Manual'][i] ? '.' + state[side + 'Pos'][i] : '') : null))
     .filter(Boolean);
@@ -431,7 +463,7 @@ function readHash() {
   if (!raw) return;
   const valid = (k) => hero(k) && !taken().has(k);
   if (!raw.includes('=')) {
-    // старый формат DotaBuffCP: #Anti-Mage/Axe/...
+    // the original DotaBuffCP format: #Anti-Mage/Axe/...
     raw.split('/').slice(0, 5).forEach((n, i) => {
       const k = norm(n.replace(/_/g, ' '));
       if (valid(k)) state.enemy[i] = k;
@@ -453,42 +485,53 @@ function readHash() {
   state.ban = (params.get('b') || '').split(',').map(norm).filter(valid);
 }
 
-/* ===================== рендер ===================== */
+/* ===================== rendering ===================== */
 
 function renderSlots() {
   for (const side of ['enemy', 'ally']) {
     $('#slots-' + side).innerHTML = state[side].map((k, i) => {
-      if (!k) return `<div class="slot-wrap"><div class="slot empty" data-side="${side}" data-i="${i}" title="Добавлять сюда по клику"></div></div>`;
+      if (!k) {
+        return `<div class="slot-wrap"><button class="slot empty" data-side="${side}" data-i="${i}" title="${esc(t('slot.empty'))}" aria-label="${esc(t('slot.empty'))}"></button></div>`;
+      }
       const h = hero(k);
       const cur = state[side + 'Pos'][i];
       const manual = state[side + 'Manual'][i];
       const sh = posShares(k);
-      const pos = [1, 2, 3, 4, 5].map((p) =>
-        `<button class="pos ${p === cur ? 'active' : ''} ${p === cur && !manual ? 'auto' : ''}" data-side="${side}" data-i="${i}" data-pos="${p}"
-          title="Позиция ${p} · ${POS_NAMES[p]} · ${Math.round(sh[p] * 100)}% игр героя${p === cur && !manual ? ' (определено автоматически)' : ''}">${p}</button>`).join('');
+      const pos = [1, 2, 3, 4, 5].map((p) => {
+        const title = t('pos.title', { p, role: posName(p), share: Math.round(sh[p] * 100) }) + (p === cur && !manual ? t('pos.auto') : '');
+        return `<button class="pos ${p === cur ? 'active' : ''} ${p === cur && !manual ? 'auto' : ''}" data-side="${side}" data-i="${i}" data-pos="${p}" title="${esc(title)}" aria-pressed="${p === cur}">${p}</button>`;
+      }).join('');
       return `<div class="slot-wrap">
-        <div class="slot filled" data-remove="${k}" title="Убрать ${esc(h.name)}">
-          <img src="${h.img}" alt="" loading="lazy"><span class="slot-name">${esc(h.name)}</span><span class="slot-x">×</span></div>
-        <div class="pos-pick">${pos}</div>
+        <button class="slot filled" data-remove="${k}" title="${esc(t('slot.remove', { name: h.name }))}">
+          <img src="${h.img}" alt="" loading="lazy"><span class="slot-name">${esc(h.name)}</span><span class="slot-x" aria-hidden="true">×</span>
+        </button>
+        <div class="pos-pick" role="group">${pos}</div>
+        <div class="slot-role">${cur ? esc(posName(cur)) : ''}</div>
       </div>`;
     }).join('');
   }
   $('#slots-ban').innerHTML = state.ban.length
-    ? state.ban.map((k) => `<div class="ban" data-remove="${k}" title="Разбанить ${esc(hero(k).name)}"><img src="${hero(k).img}" alt=""></div>`).join('')
-    : '<span class="empty-note">Нет банов — забаненные герои не попадут в рекомендации.</span>';
+    ? state.ban.map((k) => `<button class="ban" data-remove="${k}" title="${esc(t('slot.remove', { name: hero(k).name }))}"><img src="${hero(k).img}" alt="${esc(hero(k).name)}"></button>`).join('')
+    : `<span class="empty-note">${esc(t('bans.empty'))}</span>`;
+  $$('[data-clear]').forEach((b) => {
+    const side = b.dataset.clear;
+    b.disabled = side === 'ban' ? !state.ban.length : !state[side].some(Boolean);
+  });
+  $('#btn-reset').disabled = !taken().size;
 }
 
 function renderPool() {
   const q = state.query.trim();
-  const matches = q ? new Set(searchMatches()) : null;
-  const first = q ? searchMatches()[0] : null;
+  const matchList = q ? searchMatches() : null;
+  const matches = matchList ? new Set(matchList) : null;
+  const first = matchList ? matchList[0] : null;
   const res = state.results;
 
   $('#pool').innerHTML = ATTRS.map((a) => {
     const list = state.heroes.filter((h) => h.attr === a.k).sort((x, y) => x.name.localeCompare(y.name));
     if (!list.length) return '';
     return `<div class="attr-group">
-      <div class="attr-title"><i style="background:${a.color}"></i>${a.name}</div>
+      <div class="attr-title"><i style="background:${a.color}"></i>${esc(t('attr.' + a.k))}</div>
       <div class="tiles">${list.map((h) => tile(h, matches, first, res)).join('')}</div>
     </div>`;
   }).join('');
@@ -510,26 +553,31 @@ function tile(h, matches, first, res) {
   }
   if (matches) cls.push(matches.has(h.key) ? 'match' : 'dim');
   if (h.key === first) cls.push('first');
-  return `<div class="${cls.join(' ')}" data-key="${h.key}" title="${esc(h.name)}">
+  return `<div class="${cls.join(' ')}" data-key="${h.key}" title="${esc(h.name)}" role="button" tabindex="-1">
     <img src="${h.img}" alt="" loading="lazy">${badge}<span class="tile-name">${esc(h.name)}</span></div>`;
 }
 
 function renderRoleFilter() {
-  const chips = Object.entries(ROLES).map(([k, n]) =>
-    `<button class="chip ${state.roles.has(k) ? 'active' : ''}" data-role="${k}">${n}</button>`);
+  const chips = ROLE_KEYS.map((k) =>
+    `<button class="chip ${state.roles.has(k) ? 'active' : ''}" data-role="${k}" aria-pressed="${state.roles.has(k)}">${esc(t('role.' + k))}</button>`);
   const attrs = ATTRS.map((a) =>
-    `<button class="chip ${state.attr === a.k ? 'active' : ''}" data-attr="${a.k}"><span class="dot" style="background:${a.color}"></span>${a.name}</button>`);
+    `<button class="chip ${state.attr === a.k ? 'active' : ''}" data-attr="${a.k}" aria-pressed="${state.attr === a.k}"><span class="dot" style="background:${a.color}"></span>${esc(t('attr.' + a.k))}</button>`);
   $('#role-filter').innerHTML = chips.join('') + attrs.join('');
 }
 
 function renderPosFilter() {
   const btn = (v, label, title) =>
-    `<button class="${state.pickPos === v ? 'active' : ''}" data-pickpos="${v}" title="${esc(title)}">${label}</button>`;
+    `<button class="${state.pickPos === v ? 'active' : ''}" data-pickpos="${v}" title="${esc(title)}" aria-pressed="${state.pickPos === v}">${label}</button>`;
   $('#pos-filter').innerHTML =
-    `<span class="pos-label">Пикаю на</span><div class="seg small">` +
-    btn(0, 'Любая', 'Чистый контрпик, без учёта позиции') +
-    [1, 2, 3, 4, 5].map((p) => btn(p, `${p} · ${POS_NAMES[p]}`, `Только герои позиции ${p}: контрпик + мета позиции`)).join('') +
+    `<span class="pos-label">${esc(t('picks.for'))}</span><div class="seg small">` +
+    btn(0, esc(t('picks.any')), t('picks.any.title')) +
+    [1, 2, 3, 4, 5].map((p) => btn(p, `<b>${p}</b> ${esc(posName(p))}`, t('picks.pos.title', { p }))).join('') +
     '</div>';
+}
+
+function renderPicksSkeleton() {
+  $('#picks-body').innerHTML = Array.from({ length: 8 }, () =>
+    '<div class="pick skeleton"><span></span><div class="sk sk-img"></div><div><div class="sk sk-line"></div><div class="sk sk-line short"></div></div><div class="sk sk-score"></div></div>').join('');
 }
 
 function renderPicks() {
@@ -540,10 +588,11 @@ function renderPicks() {
   const P = targetPos();
   if (!res && !P) {
     body.innerHTML = `<div class="empty-state">
-      <h3>Выберите героев противника</h3>
-      <p>Кликните по портрету или начните печатать имя — <kbd>Enter</kbd> добавит первого найденного.</p>
-      <p>Сокращения работают: <code>am</code>, <code>qop</code>, <code>sf</code>, <code>wk</code>…</p>
-      <p>Выберите позицию выше («Пикаю на») — увидите мету этой позиции ещё до пика врагов.</p>
+      <div class="empty-icon" aria-hidden="true">⚔</div>
+      <h3>${esc(t('empty.title'))}</h3>
+      <p>${t('empty.p1')}</p>
+      <p>${t('empty.p2')}</p>
+      <p class="muted">${esc(t('empty.p3'))}</p>
     </div>`;
     return;
   }
@@ -553,7 +602,7 @@ function renderPicks() {
   if (P) list = list.filter((h) => posShares(h.key)[P] >= MIN_POS_SHARE);
   if (state.roles.size) list = list.filter((h) => [...state.roles].every((r) => h.roles.includes(r)));
   if (state.attr) list = list.filter((h) => h.attr === state.attr);
-  // итог = контрпик (если враги выбраны) + мета позиции (если позиция выбрана)
+  // score = counter-pick (when enemies are picked) + position meta (when a position is chosen)
   const parts = new Map(list.map((h) => {
     const counter = res ? scoreFor(h.key, P) : 0;
     const meta = posMeta(h.key, P);
@@ -566,36 +615,37 @@ function renderPicks() {
   const max = Math.max(1, ...list.map((h) => Math.abs(parts.get(h.key).total)));
 
   if (!list.length) {
-    body.innerHTML = '<div class="empty-state"><p>Нет героев под выбранные фильтры.</p></div>';
+    body.innerHTML = `<div class="empty-state"><p>${esc(t('picks.none'))}</p></div>`;
     return;
   }
 
   const head = !res
-    ? `<div class="picks-note">Мета позиции ${P} (${POS_NAMES[P]}) в текущем патче — винрейт героев на этой позиции. Добавьте врагов, чтобы учесть контрпик.</div>`
-    : P ? `<div class="picks-note">Позиция ${P}: только герои, которые её играют. Итог = контрпик + мета позиции (вес меты ×${META_WEIGHT} — контрпик важнее).</div>`
-    : '';
+    ? `<div class="picks-note">${esc(t('note.meta', { p: P, role: posName(P) }))}</div>`
+    : P ? `<div class="picks-note">${esc(t('note.pos', { p: P, w: META_WEIGHT }))}</div>` : '';
 
   body.innerHTML = head + list.slice(0, limit).map((h, i) => {
     const r = res && res.get(h.key);
     const p = parts.get(h.key);
     const s = p.total;
-    const sub = P ? `поз. ${P}: ${Math.round(posShares(h.key)[P] * 100)}% игр героя` : h.roles.slice(0, 3).map((x) => ROLES[x] || x).join(' · ');
+    const sub = P ? t('pick.share', { p: P, s: Math.round(posShares(h.key)[P] * 100) }) : h.roles.slice(0, 3).map((x) => t('role.' + x)).join(' · ');
     const vs = r ? r.vs.map((v) => {
       const e = hero(v.key);
       const lane = enemyWeight(v.key, P) > 1;
-      const title = v.adv === null ? `${e.name}: нет данных`
-        : `${e.name}: ${fmt(v.adv)}%` + (v.wr != null ? `, винрейт ${v.wr.toFixed(1)}%` : '') + (v.games ? `, ${v.games.toLocaleString('ru')} матчей` : '') +
-          (lane ? ' · стоит против вас на линии (×1.5)' : '');
-      return `<span class="vs ${lane ? 'lane' : ''}" title="${esc(title)}"><img src="${e.icon || e.img}" alt=""><span class="${v.adv === null ? 'zero' : sign(v.adv)}">${v.adv === null ? '—' : fmt(v.adv)}</span></span>`;
+      const title = v.adv === null ? t('vs.nodata', { name: e.name })
+        : `${e.name}: ${fmt(v.adv)}%` + (v.wr != null ? t('vs.wr', { wr: v.wr.toFixed(1) }) : '') +
+          (v.games ? t('vs.games', { n: v.games.toLocaleString(LANG) }) : '') + (lane ? t('vs.lane') : '');
+      return `<span class="vs ${lane ? 'lane' : ''}" title="${esc(title)}"><img src="${e.icon || e.img}" alt=""><span class="${v.adv === null ? 'flat' : sign(v.adv)}">${v.adv === null ? '—' : fmt(v.adv)}</span></span>`;
     }).join('') : '';
-    // почему герой в списке: контрпик и мета отдельно
-    const why = [
-      res ? `<span class="why ${sign(p.counter)}" title="Сумма преимуществ против выбранных врагов">контрпик ${fmt(p.counter)}</span>` : '',
-      p.meta ? `<span class="why ${sign(p.metaPts)}" title="Винрейт героя на позиции ${P} в патче: ${p.meta.wr.toFixed(1)}%">мета ${fmt(p.metaPts)} · WR ${p.meta.wr.toFixed(1)}%</span>` : '',
+    // why the hero is here: counter-pick and meta separately
+    // (only with a position — otherwise the big number on the right already is the counter-pick)
+    const why = !P ? '' : [
+      res ? `<span class="why ${sign(p.counter)}" title="${esc(t('why.counter.title'))}">${esc(t('why.counter', { v: fmt(p.counter) }))}</span>` : '',
+      p.meta ? `<span class="why ${sign(p.metaPts)}" title="${esc(t('why.meta.title', { p: P, wr: p.meta.wr.toFixed(1) }))}">${esc(t('why.meta', { v: fmt(p.metaPts), wr: p.meta.wr.toFixed(1) }))}</span>` : '',
     ].filter(Boolean).join('');
     const pct = Math.round((Math.abs(s) / max) * 100);
     const color = s >= 0 ? 'var(--good)' : 'var(--bad)';
-    return `<div class="pick" data-pick="${h.key}" title="Клик — добавить в свою команду${P ? ' на позицию ' + P : ''}">
+    const title = P ? t('pick.title.pos', { p: P }) : t('pick.title');
+    return `<div class="pick" data-pick="${h.key}" title="${esc(title)}" role="button" tabindex="0">
       <span class="pick-rank">${i + 1}</span>
       <img class="pick-img" src="${h.img}" alt="" loading="lazy">
       <div class="pick-main">
@@ -605,47 +655,70 @@ function renderPicks() {
       </div>
       <div class="pick-score">
         <b class="${sign(s)}">${fmt(s)}${res ? '%' : ''}</b>
-        <small>${r && r.wr != null ? 'WR vs врагов ' + r.wr.toFixed(1) + '%' : ''}</small>
+        <small>${r && r.wr != null ? esc(t('pick.wr', { wr: r.wr.toFixed(1) })) : ''}</small>
         <div class="bar"><span style="width:${pct}%;background:${color}"></span></div>
       </div>
+      <span class="pick-add" aria-hidden="true">+ ${esc(t('pick.add'))}</span>
     </div>`;
   }).join('') + (list.length > limit
-    ? `<button class="btn ghost more" id="show-all">Показать всех (${list.length})</button>` : '');
+    ? `<button class="btn ghost more" id="show-all">${esc(t('showall', { n: list.length }))}</button>` : '');
 }
+
 function renderSource() {
   $$('#source-switch button').forEach((b) => {
     b.classList.toggle('active', b.dataset.source === state.source);
+    b.setAttribute('aria-pressed', b.dataset.source === state.source);
     if (b.dataset.source === 'dotabuff') {
       b.disabled = !state.dotabuff;
-      b.title = state.dotabuff ? '' : 'Нет data.js — нажмите «Обновить данные»';
+      b.title = state.dotabuff ? '' : t('source.missing');
     }
   });
   const d = state.dotabuff;
   const info = $('#data-info');
-  info.style.color = '';
+  const dot = $('#data-dot');
+  let fresh = true;
   if (state.source === 'dotabuff' && d) {
-    const when = new Date(stamp(d)).toLocaleString('ru', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
-    info.textContent = `Dotabuff · ${periodName(d)} · обновлено ${when}`;
+    const when = new Date(stamp(d)).toLocaleString(LANG, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+    let txt = t('data.dotabuff', { period: periodName(d), when });
     const age = Math.floor(dataAgeDays(d));
-    if (age >= STALE_DAYS) {
-      info.textContent += ` · данные старше ${age} дн.`;
-      info.style.color = 'var(--accent)';
-    }
+    if (age >= STALE_DAYS) { txt += t('data.stale', { n: age }); fresh = false; }
+    info.textContent = txt;
   } else {
-    info.textContent = 'OpenDota live · свежие матчи высокого уровня';
+    info.textContent = state.heroes.length ? t('data.opendota') : t('data.loading');
   }
+  dot.classList.toggle('stale', !fresh);
+  dot.title = t(fresh ? 'data.fresh' : 'data.old');
+}
+
+function renderLang() {
+  $$('#lang-switch button').forEach((b) => {
+    b.classList.toggle('active', b.dataset.lang === LANG);
+    b.setAttribute('aria-pressed', b.dataset.lang === LANG);
+  });
+}
+
+function setLang(lang) {
+  saveLang(lang);
+  applyI18n();
+  renderLang();
+  renderSource();
+  renderAll();
 }
 
 let toastTimer;
-function toast(msg) {
-  const t = $('#toast');
-  t.textContent = msg;
-  t.classList.add('show');
+function toast(msg, action) {
+  const el = $('#toast');
+  $('.toast-msg', el).textContent = msg;
+  const btn = $('.toast-action', el);
+  btn.hidden = !action;
+  btn.onclick = action ? () => { el.classList.remove('show'); action.fn(); } : null;
+  if (action) btn.textContent = action.label;
+  el.classList.add('show');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.classList.remove('show'), 2600);
+  toastTimer = setTimeout(() => el.classList.remove('show'), action ? 6000 : 2600);
 }
 
-/* ===================== события ===================== */
+/* ===================== events ===================== */
 
 function bind() {
   const search = $('#search');
@@ -667,31 +740,32 @@ function bind() {
     }
   });
 
-  // начали печатать где угодно — фокус в поиск
+  // typing anywhere focuses the search; "?" opens help
   document.addEventListener('keydown', (ev) => {
     if (ev.ctrlKey || ev.metaKey || ev.altKey || document.activeElement === search) return;
-    if ($('#update-dialog').open) return;
-    if (ev.key.length === 1 && /[a-zа-я0-9']/i.test(ev.key)) search.focus();
+    if (document.querySelector('dialog[open]')) return;
+    if (ev.key === '?') { ev.preventDefault(); $('#help-dialog').showModal(); return; }
+    if (ev.key.length === 1 && /[a-zа-яіїєґ0-9']/i.test(ev.key)) search.focus();
   });
 
   const pool = $('#pool');
   pool.addEventListener('click', (ev) => {
-    const t = ev.target.closest('.tile');
-    if (!t) return;
-    const k = t.dataset.key;
+    const tl = ev.target.closest('.tile');
+    if (!tl) return;
+    const k = tl.dataset.key;
     if (taken().has(k)) { remove(k); return; }
     add(k, ev.shiftKey ? 'ban' : state.mode);
     search.value = state.query = '';
     renderPool();
   });
   pool.addEventListener('contextmenu', (ev) => {
-    const t = ev.target.closest('.tile');
-    if (!t) return;
+    const tl = ev.target.closest('.tile');
+    if (!tl) return;
     ev.preventDefault();
-    add(t.dataset.key, 'ally');
+    add(tl.dataset.key, 'ally');
   });
 
-  $('.draft').addEventListener('click', (ev) => {
+  $('#draft').addEventListener('click', (ev) => {
     const pb = ev.target.closest('button.pos');
     if (pb) { setPosition(pb.dataset.side, +pb.dataset.i, +pb.dataset.pos); return; }
     const rm = ev.target.closest('[data-remove]');
@@ -701,6 +775,8 @@ function bind() {
     const clr = ev.target.closest('[data-clear]');
     if (clr) clearSide(clr.dataset.clear);
   });
+
+  $('#jump-builds').addEventListener('click', () => $('#builds').scrollIntoView({ behavior: 'smooth', block: 'start' }));
 
   $('#pick-mode').addEventListener('click', (ev) => {
     const b = ev.target.closest('button');
@@ -712,7 +788,7 @@ function bind() {
     if (!b) return;
     state.tab = b.dataset.tab;
     state.showAll = false;
-    $$('#picks-tab button').forEach((x) => x.classList.toggle('active', x === b));
+    $$('#picks-tab button').forEach((x) => { x.classList.toggle('active', x === b); x.setAttribute('aria-pressed', x === b); });
     renderPicks();
     $('#picks-body').scrollTop = 0;
   });
@@ -730,22 +806,28 @@ function bind() {
     const b = ev.target.closest('.chip');
     if (!b) return;
     if (b.dataset.role) {
-      state.roles.has(b.dataset.role) ? state.roles.delete(b.dataset.role) : state.roles.add(b.dataset.role);
+      if (state.roles.has(b.dataset.role)) state.roles.delete(b.dataset.role); else state.roles.add(b.dataset.role);
     } else {
       state.attr = state.attr === b.dataset.attr ? null : b.dataset.attr;
     }
     renderPicks();
   });
 
+  const pickHero = (key) => {
+    const P = targetPos();
+    if (add(key, 'ally')) {
+      if (P) setPosition('ally', state.ally.indexOf(key), P);
+      toast(P ? t('toast.added.pos', { name: hero(key).name, p: P }) : t('toast.added', { name: hero(key).name }));
+    }
+  };
   $('#picks-body').addEventListener('click', (ev) => {
     if (ev.target.id === 'show-all') { state.showAll = true; renderPicks(); return; }
     const p = ev.target.closest('[data-pick]');
-    if (!p) return;
-    const P = targetPos();
-    if (add(p.dataset.pick, 'ally')) {
-      if (P) setPosition('ally', state.ally.indexOf(p.dataset.pick), P);
-      toast(hero(p.dataset.pick).name + ' добавлен в вашу команду' + (P ? ` на позицию ${P}` : ''));
-    }
+    if (p) pickHero(p.dataset.pick);
+  });
+  $('#picks-body').addEventListener('keydown', (ev) => {
+    const p = ev.target.closest('[data-pick]');
+    if (p && (ev.key === 'Enter' || ev.key === ' ')) { ev.preventDefault(); pickHero(p.dataset.pick); }
   });
 
   $('#source-switch').addEventListener('click', (ev) => {
@@ -754,37 +836,38 @@ function bind() {
     setSource(b.dataset.source);
   });
 
+  $('#lang-switch').addEventListener('click', (ev) => {
+    const b = ev.target.closest('[data-lang]');
+    if (b && b.dataset.lang !== LANG) setLang(b.dataset.lang);
+  });
+
   $('#btn-reset').addEventListener('click', () => {
-    state.enemy = [null, null, null, null, null];
-    state.ally = [null, null, null, null, null];
-    state.enemyManual = [false, false, false, false, false];
-    state.allyManual = [false, false, false, false, false];
-    state.ban = [];
-    state.pickPos = 0;
+    resetAll();
     search.value = state.query = '';
-    changed();
-    toast('Драфт очищен');
   });
 
   $('#btn-share').addEventListener('click', async () => {
-    try { await navigator.clipboard.writeText(location.href); toast('Ссылка скопирована'); }
-    catch { toast(location.href); }
+    try { await navigator.clipboard.writeText(location.href); toast(t('toast.copied')); } catch { toast(location.href); }
   });
 
-  // ---- обновление данных ----
+  $('#btn-help').addEventListener('click', () => $('#help-dialog').showModal());
+
+  // close dialogs by clicking the backdrop
+  $$('dialog').forEach((dlg) => dlg.addEventListener('click', (ev) => { if (ev.target === dlg) dlg.close(); }));
+
+  // ---- manual data update ----
   const dlg = $('#update-dialog');
   $('#btn-update').addEventListener('click', () => dlg.showModal());
   $('#btn-copy-script').addEventListener('click', async () => {
     const src = typeof dbcpScrape === 'function' ? `(${dbcpScrape.toString()})();` : null;
-    if (!src) { toast('scraper.js не найден рядом с index.html'); return; }
-    try { await navigator.clipboard.writeText(src); toast('Скрипт скопирован — вставьте его в консоль на dotabuff.com'); }
-    catch { toast('Не удалось скопировать — откройте scraper.js и скопируйте вручную'); }
+    if (!src) { toast(t('toast.script.missing')); return; }
+    try { await navigator.clipboard.writeText(src); toast(t('toast.script.copied')); } catch { toast(t('toast.script.fail')); }
   });
   $('#btn-forget').addEventListener('click', () => {
     store.del('dbcp_data');
     state.dotabuff = pickDotabuffData();
     setSource(state.dotabuff ? state.source : 'opendota');
-    toast('Импортированные данные удалены');
+    toast(t('toast.forget'));
   });
 
   const drop = $('#drop-zone');
@@ -792,13 +875,13 @@ function bind() {
     try {
       const data = parseDataFile(await file.text());
       state.dotabuff = data;
-      if (!store.set('dbcp_data', data)) toast('Данные загружены, но не сохранены в браузере (нет места)');
+      if (!store.set('dbcp_data', data)) toast(t('toast.import.nostore'));
       ensureHeroesFromDotabuff();
       setSource('dotabuff');
       dlg.close();
-      toast(`Загружены данные Dotabuff от ${data.updated}`);
+      toast(t('toast.import.ok', { d: data.updated }));
     } catch (e) {
-      toast('Ошибка импорта: ' + e.message);
+      toast(t('toast.import.err', { e: e.message }));
     }
   };
   $('#file-input').addEventListener('change', (ev) => ev.target.files[0] && importFile(ev.target.files[0]));
@@ -812,39 +895,59 @@ function bind() {
       if (f) importFile(f);
     });
   }
+
+  // mobile bottom navigation: highlight the section in view
+  const navLinks = $$('.bottom-nav a');
+  if ('IntersectionObserver' in window && navLinks.length) {
+    const io = new IntersectionObserver((entries) => {
+      entries.forEach((en) => {
+        if (en.isIntersecting) navLinks.forEach((a) => a.classList.toggle('active', a.getAttribute('href') === '#' + en.target.id));
+      });
+    }, { rootMargin: '-45% 0px -50% 0px' });
+    ['draft', 'picks', 'heroes', 'builds'].forEach((id) => { const el = document.getElementById(id); if (el) io.observe(el); });
+  }
+  navLinks.forEach((a) => a.addEventListener('click', (ev) => {
+    const target = document.querySelector(a.getAttribute('href'));
+    if (!target) return;
+    ev.preventDefault();
+    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }));
 }
 
 function setMode(mode) {
   state.mode = mode;
-  $$('#pick-mode button').forEach((b) => b.classList.toggle('active', b.dataset.mode === mode));
+  $$('#pick-mode button').forEach((b) => { b.classList.toggle('active', b.dataset.mode === mode); b.setAttribute('aria-pressed', b.dataset.mode === mode); });
 }
 
 function setSource(src) {
-  shareCache.clear(); // данные могли поменяться (импорт)
+  shareCache.clear(); // the data may have changed (import)
   state.source = src;
   store.set('dbcp_source', src);
   renderSource();
   calculate();
 }
 
-// герои, которых нет в OpenDota (или OpenDota недоступен), берём из data.js
+// heroes missing in OpenDota (or OpenDota is down) are taken from data.js
 function ensureHeroesFromDotabuff() {
   const d = state.dotabuff;
   if (!d) return;
   const haveMeta = state.heroes.some((h) => h.id);
   for (const [key, h] of Object.entries(d.heroes)) {
     if (state.byKey.has(key)) continue;
-    if (haveMeta) { console.warn('[DotaBuffCP] герой из Dotabuff не найден в OpenDota:', h.name, key); continue; }
+    if (haveMeta) { console.warn('[DotaBuffCP] Dotabuff hero not found in OpenDota:', h.name, key); continue; }
     const entry = { key, id: null, name: h.name, attr: 'all', roles: [], img: h.img || '', icon: h.img || '', wr: 50 };
     state.heroes.push(entry);
     state.byKey.set(key, entry);
   }
 }
 
-/* ===================== старт ===================== */
+/* ===================== start ===================== */
 
 async function init() {
+  applyI18n();
+  renderLang();
   bind();
+  renderPicksSkeleton();
   const [meta] = await Promise.allSettled([loadHeroMeta(), loadDataScript()]);
   state.dotabuff = pickDotabuffData();
 
@@ -853,13 +956,13 @@ async function init() {
     state.heroes = meta.value;
   } catch (e) {
     if (!state.dotabuff) {
-      $('#pool').innerHTML = `<div class="empty-state"><h3>Нет данных</h3>
-        <p>OpenDota недоступен (${esc(e.message)}), а data.js не найден.</p>
-        <p>Проверьте интернет или загрузите data.js через «Обновить данные».</p></div>`;
-      $('#data-info').textContent = 'нет данных';
+      $('#pool').innerHTML = `<div class="empty-state"><h3>${esc(t('nodata.title'))}</h3>
+        <p>${esc(t('nodata.p1', { e: e.message }))}</p><p>${esc(t('nodata.p2'))}</p></div>`;
+      $('#picks-body').innerHTML = '';
+      $('#data-info').textContent = t('data.none');
       return;
     }
-    toast('OpenDota недоступен — работаем только на данных Dotabuff');
+    toast(t('toast.od.down'));
   }
   state.byKey = new Map(state.heroes.map((h) => [h.key, h]));
   ensureHeroesFromDotabuff();
@@ -870,7 +973,7 @@ async function init() {
   state.source = state.dotabuff && saved !== 'opendota' ? 'dotabuff' : 'opendota';
   if (state.source === 'dotabuff' && stale && haveOd) {
     state.source = 'opendota';
-    toast('Данные Dotabuff устарели — показываю свежие данные OpenDota');
+    toast(t('toast.od.stale'));
   }
   if (!haveOd) state.source = 'dotabuff';
 

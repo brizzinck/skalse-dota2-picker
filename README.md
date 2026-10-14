@@ -1,114 +1,94 @@
-# DotaBuffCP — Counter Picker
+# Counter Picker — Dota 2
 
-Обновлённая версия [mnmistake/DotaBuffCP](https://github.com/mnmistake/DotaBuffCP): контрпикер Dota 2
-на данных Dotabuff (и OpenDota как запасной live-источник). Сервер не нужен — просто откройте `index.html`.
+A Dota 2 counter picker with position-aware suggestions and item builds, based on
+[Dotabuff](https://www.dotabuff.com) statistics (with [OpenDota](https://www.opendota.com) as a live fallback).
+A modern rewrite of [mnmistake/DotaBuffCP](https://github.com/mnmistake/DotaBuffCP).
 
-## Возможности
+**Live site:** https://brizzinck.github.io/dota-analysis/ — Ukrainian by default, Russian and English selectable.
+No server needed: it is a static site, you can also just open `index.html`.
 
-- Драфт: 5 врагов, 5 своих, баны. Свои и забаненные исключаются из рекомендаций.
-- Сетка героев по атрибутам, как в клиенте игры. На каждом портрете — суммарное преимущество против выбранных врагов
-  (зелёная рамка — хороший пик, красная — плохой).
-- Список лучших/худших пиков с разбивкой по каждому врагу, средним винрейтом и фильтрами по ролям и атрибуту.
-- Быстрый поиск с сокращениями (`am`, `qop`, `sf`, `wk`, `kotl`…): `Enter` — во враги, `Shift+Enter` — к своим,
-  `Backspace` в пустом поле — убрать последнего врага. Печатать можно сразу, без клика в поле.
-- ЛКМ по герою — во враги, ПКМ — к своим, `Shift`+клик — бан. Клик по рекомендации добавляет её в вашу команду.
-- Ссылка на драфт (`#e=pudge,antimage&a=axe&b=invoker`), старые ссылки вида `#Pudge/Axe` тоже работают.
-  Позиции, заданные вручную, пишутся через точку: `#a=axe.3,lion.5`.
+## Features
 
-### Позиции
+### Draft
+- 5 enemies, 5 allies, bans. Allies and bans are never suggested.
+- Hero grid grouped by attribute, as in the game client. Once enemies are picked, every portrait shows its total
+  advantage (green border — good pick, red — bad).
+- Fast search with aliases (`am`, `qop`, `sf`, `wk`, `kotl`…). Type anywhere: `Enter` → enemies,
+  `Shift+Enter` → your team, `Alt+Enter` → ban, `Backspace` in an empty search removes the last enemy.
+- Left click → enemies, right click → your team, `Shift`+click → ban. Every removal / clear / reset can be undone
+  from the notification.
+- Shareable draft links: `#e=pudge,antimage&a=axe.3,lion.5&b=invoker` (`hero.position` for manually set positions).
+  Links of the original DotaBuffCP (`#Pudge/Axe`) still work.
 
-- У каждого героя обеих команд есть переключатель позиции **1–5**. Позиции расставляются автоматически по статистике
-  Dotabuff (доля игр героя на линии + GPM: на одной линии кор фармит больше саппорта); клик по цифре фиксирует позицию.
-- **«Пикаю на»** — для какой позиции подбирается герой:
-  - «Любая» (по умолчанию) — чистый контрпик против выбранных врагов;
-  - 1–5 — только герои, которые реально играют эту позицию (≥10% игр). Итог = контрпик + 0.5 × (винрейт героя на
-    позиции − 50%) — контрпик важнее, мета добирает. Вес меты растёт с долей игр героя на позиции (редкие офф-пики
-    не завышаются). Враги, стоящие против вас на линии, весят ×1.5. У каждого героя видна разбивка
-    «контрпик · мета · WR на позиции»;
-  - позиция выбрана, а врагов ещё нет — показывается мета позиции в текущем патче.
+### Positions
+- Every hero of both teams has a **1–5** position switch. Positions are assigned automatically from Dotabuff lane data
+  (lane share + GPM: on the same lane a core farms far more than a support); a click fixes a position.
+- **Picking for**:
+  - *Any* (default) — pure counter-pick against the chosen enemies;
+  - *1–5* — only heroes that actually play the position (≥10% of their games). Score = counter-pick +
+    0.5 × (hero win rate on the position − 50%): counter-picks matter more, the meta tips the balance. The meta weight
+    grows with how often the hero plays the position, so rare off-role picks are not inflated. Your lane opponents
+    weigh ×1.5. Each hero shows a "counter · meta · WR on position" breakdown;
+  - a position without enemies shows that position's meta in the current patch.
 
-### Откуда билды
+### Item builds
+For every hero of your team — what to buy and by which minute:
+- **Timeline** (laning / until 20' / 20–30' / 30–40' / late game). Dotabuff gives patch-wide item statistics
+  (millions of games per hero) but no per-position split; that split exists only in Dotabuff Guides (~20 recent
+  top-player matches per hero). Therefore:
+  - item popularity and win rate always come from the whole patch;
+  - with ≥10 guide matches on the position, items and timings come from those matches;
+  - otherwise the patch statistics are filtered by position rules (`ITEM_POS` in `knowledge.js`); items top players
+    bought on that position in at least 3 matches are always included; timings come from the guides where available,
+    otherwise from OpenDota or a GPM estimate (marked `≈`).
+- **Against this team**: counter-items for the actual enemy draft (illusions → Mjollnir/BFury, invisibility →
+  Dust/Sentry, evasion → MKB, targeted ultimates → Linken/Lotus, healing → Vessel/Shiva…) with the reason and the enemy
+  icons. Attack items are suggested only to heroes who build them. The best two go into the timeline (⚑).
+- **Team items** (Vessel, Pipe, Crimson, Mekansm, Greaves, Lotus, Gem…) are suggested to one ally — whoever builds it
+  as a core item, otherwise the best-fitting position.
 
-Dotabuff даёт статистику предметов за весь патч (миллионы игр героя), но без разбивки по позициям; разбивка есть
-только в Guides — ~20 свежих матчей топ-игроков на героя. Поэтому:
-- популярность и винрейт предметов — всегда по всему патчу;
-- если на позиции ≥10 матчей в гайдах — состав и тайминги билда берутся из них;
-- иначе — статистика патча, отфильтрованная правилами позиции (`ITEM_POS` в `knowledge.js`); предметы, которые
-  топ-игроки брали на этой позиции минимум в 3 матчах, добавляются обязательно; тайминги — из гайдов где есть.
+## Data
 
-### Билды
-
-Для каждого героя вашей команды — что и к какой минуте собирать:
-- **Таймлайн** (линия / до 20' / 20–30' / 30–40' / лейт): популярные предметы героя в текущем патче (Dotabuff, с учётом
-  позиции — коровые предметы саппортам не советуются и наоборот), порядок и время — по реальным таймингам покупки
-  (OpenDota) или по GPM героя на этой позиции (помечено `≈`).
-- **Против этой команды**: контр-предметы под конкретных врагов (иллюзии → Mjollnir/BFury, невидимость → Dust/Sentry,
-  уклонение → MKB, точечный ульт → Linken/Lotus, хил → Vessel/Shiva…) с причиной и иконками врагов. «Атакующие»
-  предметы советуются только героям, которые их реально собирают. Лучшие 2 попадают в таймлайн (⚑).
-- База угроз героев и контр-предметов — `knowledge.js`.
-
-## Источники данных
-
-| Источник | Что это | Как получить |
+| Source | What | How it is refreshed |
 |---|---|---|
-| **Dotabuff** | Disadvantage и винрейт из `/heroes/<hero>/counters`, сотни тысяч матчей | `data.js`, собранный скриптом (см. ниже) |
-| **OpenDota live** | `/heroes/{id}/matchups` (матчи высокого уровня), сглаживается из-за малых выборок | работает сразу, кэш 24 ч |
+| **Dotabuff** | counters, lanes, item stats, guides for the current patch (`?date=patch_X.XX`; the last week right after a new patch) | `data.js`, collected by `scraper.js` |
+| **OpenDota** | hero list and images, item constants, purchase timings; live counter fallback | fetched by the browser, cached for a day |
 
-### GitHub Pages + автообновление через GitHub Actions
+Every visit loads the latest `data.js` (bypassing the cache). If the data is older than 3 days, the site switches to
+OpenDota live by itself.
 
-Workflow `.github/workflows/update-data.yml` каждые 6 часов открывает dotabuff.com в Google Chrome на
-сервере GitHub, собирает данные (`scripts/update-data.mjs` → `scraper.js`), коммитит `data.js` и публикует сайт.
-Компьютер для этого не нужен.
+### Keeping the data fresh
 
-Сборщик сам определяет текущий патч (`?date=patch_X.XX` на Dotabuff) и берёт данные только по нему; если патч
-только вышел и матчей мало — берёт последнюю неделю. Каждый посетитель при заходе получает последнюю версию
-`data.js` (в обход кэша). Если данные старше 3 дней, сайт сам переключается на OpenDota live.
+Dotabuff is behind Cloudflare, so the data is collected by a real browser running `scraper.js` on dotabuff.com:
 
-Настройка один раз:
-1. Залейте все файлы в репозиторий на GitHub (ветка `main`), включая папки `.github` и `scripts`.
-2. **Settings → Pages → Build and deployment → Source: GitHub Actions.**
-3. **Actions →** «Update data & deploy» **→ Run workflow** — первый запуск вручную, дальше по расписанию.
+- **GitHub Actions** (`.github/workflows/update-data.yml`) — every 6 hours tries Patchright / Playwright with
+  Google Chrome and commits `data.js`. Cloudflare is strict with datacenter IPs, so this may be blocked.
+- **Your Windows PC** (reliable): `update-data.ps1 -Push` runs a headless Microsoft Edge, collects the data and pushes
+  `data.js` to the repository. Schedule it every 6 hours and at log on:
 
-Сайт: `https://<логин>.github.io/<репозиторий>/`. Если сбор с Dotabuff упадёт, сайт останется со старыми
-данными, а в шапке через 2 дня появится предупреждение. GitHub отключает расписание в репозиториях без
-активности 60 дней — тогда во вкладке Actions нужно нажать «Enable workflow».
+  ```powershell
+  powershell -ExecutionPolicy Bypass -File install-autoupdate.ps1          # install
+  powershell -ExecutionPolicy Bypass -File install-autoupdate.ps1 -Remove  # remove
+  ```
 
-### Автообновление на своём компьютере (Windows)
+  The log is in `update.log`.
+- **Manually**: “Update manually” in the site footer → copy the script → paste it into the console on dotabuff.com →
+  drop the downloaded `data.js` onto the page.
 
-```powershell
-powershell -ExecutionPolicy Bypass -File install-autoupdate.ps1
-```
+## Files
 
-Ставит задачу в Планировщик Windows: каждый день в 06:00 и при входе в систему. Если в это время компьютер был выключен,
-задача выполнится при первой возможности. Задача запускает `update-data.ps1`: невидимый (headless) Microsoft Edge открывает
-dotabuff.com, собирает все 127 страниц counters (~30 с) и перезаписывает `data.js`, но только если сбор прошёл успешно.
-Результаты пишутся в `update.log`. Удалить задачу: `install-autoupdate.ps1 -Remove`. Обновить вручную: `update-data.ps1`.
+| File | Purpose |
+|---|---|
+| `index.html`, `styles.css` | markup and styles |
+| `app.js` | draft, positions, counter-pick suggestions, URL state |
+| `builds.js` | item builds and timings |
+| `knowledge.js` | hero threats, counter-items, position rules for items, team items |
+| `i18n.js` | translations (uk / ru / en) |
+| `scraper.js` | Dotabuff collector (runs inside a browser on dotabuff.com) |
+| `scripts/update-data.mjs` | collector runner for CI (Node + Chrome) |
+| `update-data.ps1`, `install-autoupdate.ps1` | collector runner and scheduler for Windows |
+| `data.js` | collected Dotabuff data |
 
-Если данные устарели больше чем на 2 дня, приложение подсветит это в шапке.
+## License
 
-### Обновить вручную через консоль браузера
-
-Dotabuff закрыт Cloudflare, поэтому серверный скрейпер (старый `generate-data_js.pl`) больше не работает.
-Запасной вариант — данные собирает ваш браузер:
-
-1. Откройте https://www.dotabuff.com/heroes.
-2. `F12` → Console. Вставьте содержимое `scraper.js` (или нажмите в приложении «Обновить данные» → «Скопировать скрипт»).
-   Chrome при первой вставке попросит ввести `allow pasting`.
-3. Через 1–3 минуты скачается `data.js`. Положите его рядом с `index.html` **или** перетащите в окно приложения
-   (тогда он сохранится в браузере).
-
-Период можно задать: `dbcpScrape({ date: 'week' })` (значение параметра `date` на Dotabuff).
-
-## Как считается
-
-Для каждого кандидата суммируется его преимущество против каждого выбранного врага
-(Dotabuff: «Disadvantage» врага против кандидата). Это та же логика, что в оригинальном DotaBuffCP.
-
-## Файлы
-
-- `index.html`, `styles.css`, `app.js` — приложение (драфт, позиции, рекомендации)
-- `builds.js` — билды и тайминги предметов, `knowledge.js` — угрозы героев и контр-предметы
-- `scraper.js` — сборщик данных с Dotabuff (его использует `update-data.ps1`, можно запустить и в консоли браузера)
-- `update-data.ps1` — обновление `data.js` через headless Edge
-- `install-autoupdate.ps1` — установка/удаление ежедневной задачи
-- `data.js` — данные Dotabuff (создаётся скриптом, необязателен)
+MIT — see `COPYING`. Based on DotaBuffCP by Onur Aslan.

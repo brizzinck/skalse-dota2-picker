@@ -1,91 +1,98 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="uk">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Контрпикер Dota 2 на данных Dotabuff и OpenDota.">
-  <title>DotaBuff Counter Picker</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Rajdhani:wght@600;700&display=swap" rel="stylesheet">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="description" content="Dota 2 counter picker and item builds based on Dotabuff and OpenDota.">
+  <title>Counter Picker · Dota 2</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="icon" href="favicon-32.png" sizes="32x32" type="image/png">
   <link rel="apple-touch-icon" href="apple-touch-icon.png">
   <meta name="theme-color" content="#0b0e14">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Rajdhani:wght@600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <header class="topbar">
     <div class="brand">
       <img class="brand-mark" src="favicon.svg" alt="">
-      <div>
+      <div class="brand-text">
         <div class="brand-title">Counter Picker</div>
-        <div class="brand-sub" id="data-info">загрузка…</div>
+        <div class="brand-sub"><span class="data-dot" id="data-dot"></span><span id="data-info" data-i18n="data.loading">loading…</span></div>
       </div>
     </div>
     <div class="topbar-actions">
-      <div class="seg" id="source-switch" role="tablist" aria-label="Источник данных">
-        <button data-source="dotabuff">Dotabuff</button>
-        <button data-source="opendota">OpenDota live</button>
+      <div class="seg small" id="lang-switch" role="group" data-i18n-aria="lang.aria">
+        <button data-lang="uk">UA</button>
+        <button data-lang="ru">RU</button>
+        <button data-lang="en">EN</button>
       </div>
-      <button class="btn ghost" id="btn-reset" title="Очистить врагов, свою команду и баны">Сбросить всё</button>
-      <button class="btn ghost" id="btn-share" title="Скопировать ссылку на текущий драфт">Поделиться</button>
+      <div class="seg small" id="source-switch" role="group" data-i18n-aria="source.aria">
+        <button data-source="dotabuff">Dotabuff</button>
+        <button data-source="opendota">OpenDota</button>
+      </div>
+      <button class="btn ghost" id="btn-reset" data-i18n-title="btn.reset.title"><span class="btn-icon" aria-hidden="true">↺</span><span data-i18n="btn.reset">Reset all</span></button>
+      <button class="btn" id="btn-share" data-i18n-title="btn.share.title"><span class="btn-icon" aria-hidden="true">⤴</span><span data-i18n="btn.share">Share</span></button>
+      <button class="btn ghost icon-only" id="btn-help" data-i18n-title="btn.help.title" data-i18n-aria="btn.help.title">?</button>
     </div>
   </header>
 
   <main class="layout">
-    <!-- Драфт -->
-    <section class="draft card">
+    <!-- Draft -->
+    <section class="draft card" id="draft">
       <div class="team team-enemy">
         <div class="team-head">
-          <span class="team-label">Враги</span>
-          <span class="team-hint">ЛКМ по герою</span>
-          <button class="clear-btn" data-clear="enemy">✕ очистить</button>
+          <span class="team-label" data-i18n="team.enemy">Enemies</span>
+          <span class="team-hint" data-i18n="hint.enemy">left click</span>
+          <button class="clear-btn" data-clear="enemy"><span aria-hidden="true">✕</span> <span data-i18n="btn.clear">Clear</span></button>
         </div>
         <div class="slots" id="slots-enemy"></div>
       </div>
       <div class="team team-ally">
         <div class="team-head">
-          <span class="team-label">Ваша команда</span>
-          <span class="team-hint">ПКМ по герою</span>
-          <button class="clear-btn" data-clear="ally">✕ очистить</button>
+          <span class="team-label" data-i18n="team.ally">Your team</span>
+          <span class="team-hint" data-i18n="hint.ally">right click</span>
+          <button class="jump-btn" id="jump-builds" data-i18n-title="btn.jump.title" hidden><span data-i18n="btn.jump">Builds ↓</span></button>
+          <button class="clear-btn" data-clear="ally"><span aria-hidden="true">✕</span> <span data-i18n="btn.clear">Clear</span></button>
         </div>
         <div class="slots" id="slots-ally"></div>
       </div>
       <div class="team team-ban">
         <div class="team-head">
-          <span class="team-label">Баны</span>
-          <span class="team-hint">Shift + клик</span>
-          <button class="clear-btn" data-clear="ban">✕ очистить</button>
+          <span class="team-label" data-i18n="team.ban">Bans</span>
+          <span class="team-hint" data-i18n="hint.ban">Shift + click</span>
+          <button class="clear-btn" data-clear="ban"><span aria-hidden="true">✕</span> <span data-i18n="btn.clear">Clear</span></button>
         </div>
         <div class="bans" id="slots-ban"></div>
       </div>
     </section>
 
-    <!-- Сетка героев -->
-    <section class="pool card">
+    <!-- Hero grid -->
+    <section class="pool card" id="heroes">
       <div class="pool-head">
         <div class="search">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.5 3a7.5 7.5 0 0 1 5.93 12.09l4.24 4.24-1.41 1.41-4.24-4.24A7.5 7.5 0 1 1 10.5 3zm0 2a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11z"/></svg>
-          <input id="search" type="text" placeholder="Поиск: имя или сокращение (am, qop, sf)…" autocomplete="off" spellcheck="false">
+          <input id="search" type="text" autocomplete="off" spellcheck="false" data-i18n-placeholder="search.placeholder" data-i18n-aria="search.aria">
           <kbd>Enter</kbd>
         </div>
-        <div class="seg small" id="pick-mode" aria-label="Куда добавлять по клику">
-          <button data-mode="enemy" class="active">→ Враги</button>
-          <button data-mode="ally">→ Свои</button>
-          <button data-mode="ban">→ Бан</button>
+        <div class="seg small" id="pick-mode" role="group" data-i18n-aria="mode.aria">
+          <button data-mode="enemy" class="active" aria-pressed="true" data-i18n="mode.enemy">→ Enemies</button>
+          <button data-mode="ally" aria-pressed="false" data-i18n="mode.ally">→ Allies</button>
+          <button data-mode="ban" aria-pressed="false" data-i18n="mode.ban">→ Ban</button>
         </div>
       </div>
       <div class="pool-grid" id="pool"></div>
     </section>
 
-    <!-- Рекомендации -->
-    <section class="picks card">
+    <!-- Suggestions -->
+    <section class="picks card" id="picks">
       <div class="picks-head">
         <div class="pos-filter" id="pos-filter"></div>
-        <div class="seg" id="picks-tab">
-          <button data-tab="best" class="active">Лучшие пики</button>
-          <button data-tab="worst">Худшие пики</button>
+        <div class="seg" id="picks-tab" role="group">
+          <button data-tab="best" class="active" aria-pressed="true" data-i18n="tab.best">Best picks</button>
+          <button data-tab="worst" aria-pressed="false" data-i18n="tab.worst">Worst picks</button>
         </div>
         <div class="chips" id="role-filter"></div>
       </div>
@@ -93,58 +100,90 @@
     </section>
   </main>
 
-  <!-- Билды вашей команды -->
+  <!-- Your team's builds -->
   <section class="builds-section" id="builds" hidden>
     <div class="builds-title">
-      <h2>Билды вашей команды</h2>
-      <p class="muted">Что собирать и к какой минуте — по свежим матчам топ-игроков именно на этой позиции (Dotabuff Guides), время — медианное время покупки.
-        Если матчей на позиции мало — общий билд героя в текущем патче, отфильтрованный под позицию.
-        <span class="legend"><span class="item-flag">⚑</span> — предмет против вражеского пика, <b>≈</b> — расчётное время по GPM,
-        <span class="team-tag">на команду</span> — нужен одному человеку в команде. Наведите на предмет — подробности.</span></p>
+      <h2 data-i18n="builds.title">Your team’s builds</h2>
+      <p class="muted" data-i18n="builds.desc"></p>
+      <ul class="legend">
+        <li><span class="legend-swatch counter"><span class="item-flag">⚑</span></span><span data-i18n="legend.flag"></span></li>
+        <li><b class="legend-approx">≈</b><span data-i18n="legend.approx"></span></li>
+        <li><span class="team-tag">·</span><span data-i18n="legend.team"></span></li>
+        <li class="muted" data-i18n="legend.hover"></li>
+      </ul>
     </div>
     <div class="builds-grid" id="builds-body"></div>
   </section>
 
   <footer class="foot">
-    Основано на <a href="https://github.com/mnmistake/DotaBuffCP">DotaBuffCP</a>.
-    Данные: <a href="https://www.dotabuff.com">Dotabuff</a> / <a href="https://www.opendota.com">OpenDota</a>,
-    обновляются автоматически (<button class="link" id="btn-update">обновить вручную</button>).
-    Горячие клавиши: печатайте имя → <kbd>Enter</kbd> во враги, <kbd>Shift</kbd>+<kbd>Enter</kbd> к своим,
-    <kbd>Backspace</kbd> в пустом поиске удаляет последнего врага, <kbd>Esc</kbd> очищает поиск.
+    <p data-i18n-html="footer.based"></p>
+    <p>
+      <button class="link" id="btn-update" data-i18n="footer.update">Update manually</button>
+      · <a href="https://github.com/brizzinck/dota-analysis" data-i18n="footer.source">Source code</a>
+    </p>
   </footer>
 
-  <!-- Модалка обновления данных -->
+  <!-- Mobile navigation -->
+  <nav class="bottom-nav" aria-label="Sections">
+    <a href="#draft"><span aria-hidden="true">⚔</span><span data-i18n="nav.draft">Draft</span></a>
+    <a href="#picks"><span aria-hidden="true">★</span><span data-i18n="nav.picks">Picks</span></a>
+    <a href="#heroes"><span aria-hidden="true">▦</span><span data-i18n="nav.heroes">Heroes</span></a>
+    <a href="#builds" class="nav-builds"><span aria-hidden="true">⛨</span><span data-i18n="nav.builds">Builds</span></a>
+  </nav>
+
+  <!-- Help -->
+  <dialog id="help-dialog" class="dialog">
+    <form method="dialog" class="dialog-inner">
+      <h2 data-i18n="help.title">How to use</h2>
+      <ul class="help-list">
+        <li data-i18n-html="help.1"></li>
+        <li data-i18n-html="help.2"></li>
+        <li data-i18n-html="help.3"></li>
+        <li data-i18n-html="help.4"></li>
+        <li data-i18n-html="help.5"></li>
+        <li data-i18n-html="help.6"></li>
+        <li data-i18n-html="help.7"></li>
+      </ul>
+      <div class="dialog-actions"><button class="btn" value="close" data-i18n="close">Close</button></div>
+    </form>
+  </dialog>
+
+  <!-- Manual data update -->
   <dialog id="update-dialog" class="dialog">
     <form method="dialog" class="dialog-inner">
-      <h2>Обновить данные Dotabuff</h2>
-      <p>Данные обновляются автоматически раз в сутки — делать ничего не нужно.
-         Если хотите свежие данные прямо сейчас, соберите их своим браузером:</p>
+      <h2 data-i18n="upd.title">Update Dotabuff data</h2>
+      <p data-i18n="upd.p"></p>
       <ol>
-        <li>Нажмите <b>«Скопировать скрипт»</b>.</li>
-        <li>Откройте <a href="https://www.dotabuff.com/heroes" target="_blank" rel="noopener">dotabuff.com/heroes</a>, затем консоль браузера (<kbd>F12</kbd> → Console).</li>
-        <li>Вставьте скрипт и нажмите <kbd>Enter</kbd>. Chrome при первой вставке попросит ввести <code>allow pasting</code>.</li>
-        <li>Через 1–3 минуты скачается <code>data.js</code>. Положите его рядом с <code>index.html</code> или перетащите сюда.</li>
+        <li data-i18n-html="upd.s1"></li>
+        <li data-i18n-html="upd.s2"></li>
+        <li data-i18n-html="upd.s3"></li>
+        <li data-i18n-html="upd.s4"></li>
       </ol>
-      <div class="drop" id="drop-zone">Перетащите <code>data.js</code> сюда или <label class="link">выберите файл<input type="file" id="file-input" accept=".js,.json" hidden></label></div>
+      <div class="drop" id="drop-zone">
+        <span data-i18n-html="upd.drop"></span>
+        <label class="link"><span data-i18n="upd.choose">choose a file</span><input type="file" id="file-input" accept=".js,.json" hidden></label>
+      </div>
       <div class="dialog-actions">
-        <button type="button" class="btn" id="btn-copy-script">Скопировать скрипт</button>
-        <button type="button" class="btn ghost" id="btn-forget" title="Удалить импортированные данные из браузера">Сбросить импорт</button>
-        <button class="btn ghost" value="close">Закрыть</button>
+        <button type="button" class="btn" id="btn-copy-script" data-i18n="upd.copy">Copy script</button>
+        <button type="button" class="btn ghost" id="btn-forget" data-i18n="upd.forget" data-i18n-title="upd.forget.title">Reset import</button>
+        <button class="btn ghost" value="close" data-i18n="close">Close</button>
       </div>
     </form>
   </dialog>
 
-  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <div class="toast" id="toast" role="status" aria-live="polite">
+    <span class="toast-msg"></span>
+    <button class="toast-action" type="button" hidden></button>
+  </div>
 
-  <!-- data.js app.js загружает сам, всегда свежую версию; без него работает режим OpenDota -->
-  <!-- Скрипты грузим с меткой времени (обновляется раз в 10 минут), чтобы после обновления
-       сайта браузер не держал старую версию из кэша. Порядок важен. -->
+  <!-- Scripts are loaded with a time-based version (changes every 10 minutes) so browsers
+       don't keep an old copy after the site is updated. Order matters. -->
   <script>
     (function () {
       var v = location.protocol.indexOf('http') === 0 ? '?v=' + Math.floor(Date.now() / 6e5) : '';
       var css = document.querySelector('link[href="styles.css"]');
       if (css && v) css.href = 'styles.css' + v;
-      ['scraper.js', 'knowledge.js', 'builds.js', 'app.js'].reduce(function (prev, src) {
+      ['i18n.js', 'scraper.js', 'knowledge.js', 'builds.js', 'app.js'].reduce(function (prev, src) {
         return prev.then(function () {
           return new Promise(function (resolve) {
             var s = document.createElement('script');

@@ -1,34 +1,35 @@
 'use strict';
 /*
- * База знаний «что собирать против кого».
+ * Knowledge base: "what to build against whom".
  *
- * THREATS — что опасного несёт вражеский герой (теги).
- * COUNTER_ITEMS — какие предметы закрывают каждую угрозу, для кого (core = позиции 1–3,
- * support = 4–5) и почему. Ключи предметов — внутренние имена Dota 2 (как в OpenDota/Valve).
+ * THREATS        — what dangerous mechanics an enemy hero brings (tags).
+ * COUNTER_ITEMS  — items that answer each threat, who should buy them (core = positions 1–3,
+ *                  support = 4–5, optional pos list) and why. Item keys are internal Dota 2 names
+ *                  (as in OpenDota / Valve). Texts are { en, ru, uk }.
  *
- * Статистика (что герой реально собирает и с каким винрейтом) берётся из Dotabuff,
- * тайминги — из OpenDota. Здесь только игровая логика, которую статистикой не вытащить.
+ * Statistics (what a hero actually builds and with what win rate) come from Dotabuff, timings from
+ * Dotabuff Guides / OpenDota. This file holds only the game logic that statistics can't provide.
  */
 
 const THREAT_INFO = {
-  illusions:  { name: 'Иллюзии / клоны', icon: '👥' },
-  evasion:    { name: 'Уклонение', icon: '💨' },
-  invis:      { name: 'Невидимость', icon: '👻' },
-  magic:      { name: 'Магический урон / контроль', icon: '✨' },
-  heal:       { name: 'Лечение и реген', icon: '➕' },
-  physical:   { name: 'Физический урон с руки', icon: '⚔️' },
-  passive:    { name: 'Сильные пассивки (break)', icon: '🛡️' },
-  buffs:      { name: 'Снимаемые баффы', icon: '🔆' },
-  mobility:   { name: 'Мобильность / побег', icon: '🏃' },
-  mana:       { name: 'Зависимость от маны', icon: '💧' },
-  single:     { name: 'Точечный ульт / контроль', icon: '🎯' },
-  disable:    { name: 'Массовый контроль', icon: '🌀' },
-  summons:    { name: 'Призывы', icon: '🐺' },
-  armor:      { name: 'Много брони / танк', icon: '🧱' },
-  silence:    { name: 'Сайленс / дизарм', icon: '🔇' },
+  illusions: { en: 'Illusions / clones', ru: 'Иллюзии / клоны', uk: 'Ілюзії / клони' },
+  evasion: { en: 'Evasion', ru: 'Уклонение', uk: 'Ухилення' },
+  invis: { en: 'Invisibility', ru: 'Невидимость', uk: 'Невидимість' },
+  magic: { en: 'Magic damage / control', ru: 'Магический урон / контроль', uk: 'Магічна шкода / контроль' },
+  heal: { en: 'Healing and regen', ru: 'Лечение и реген', uk: 'Лікування та реген' },
+  physical: { en: 'Right-click damage', ru: 'Физический урон с руки', uk: 'Фізична шкода з руки' },
+  passive: { en: 'Strong passives (break)', ru: 'Сильные пассивки (break)', uk: 'Сильні пасивки (break)' },
+  buffs: { en: 'Dispellable buffs', ru: 'Снимаемые баффы', uk: 'Баффи, що знімаються' },
+  mobility: { en: 'Mobility / escape', ru: 'Мобильность / побег', uk: 'Мобільність / втеча' },
+  mana: { en: 'Mana dependency', ru: 'Зависимость от маны', uk: 'Залежність від мани' },
+  single: { en: 'Single-target ultimate / disable', ru: 'Точечный ульт / контроль', uk: 'Точковий ульт / контроль' },
+  disable: { en: 'Mass disable', ru: 'Массовый контроль', uk: 'Масовий контроль' },
+  summons: { en: 'Summons', ru: 'Призывы', uk: 'Призови' },
+  armor: { en: 'High armor / tank', ru: 'Много брони / танк', uk: 'Багато броні / танк' },
+  silence: { en: 'Silence / disarm', ru: 'Сайленс / дизарм', uk: 'Сайленс / дизарм' },
 };
 
-// Угрозы героев (ключ — нормализованное имя, как в app.js)
+// Enemy hero threats (key = normalized hero name, as in app.js)
 const THREATS = {
   abaddon: ['heal', 'buffs'],
   alchemist: ['heal', 'physical', 'armor'],
@@ -159,102 +160,102 @@ const THREATS = {
   zeus: ['magic'],
 };
 
-// for: core | support | any;  pos — только для этих позиций (необязательно);  p — приоритет (1–3)
+// for: core | support | any;  pos — only for these positions (optional);  p — priority (1–3)
 const COUNTER_ITEMS = {
   illusions: [
-    { item: 'mjollnir', for: 'core', p: 3, why: 'цепная молния выносит иллюзии' },
-    { item: 'bfury', for: 'core', p: 3, why: 'сплеш по иллюзиям и клонам' },
-    { item: 'maelstrom', for: 'core', p: 2, why: 'дешёвая молния против иллюзий' },
-    { item: 'radiance', for: 'core', p: 2, why: 'жжёт пачку иллюзий' },
-    { item: 'shivas_guard', for: 'core', p: 2, why: 'AoE-урон и замедление' },
-    { item: 'crimson_guard', for: 'core', pos: [3], p: 1, why: 'блок урона от толпы иллюзий' },
+    { item: 'mjollnir', for: 'core', p: 3, why: { en: 'chain lightning clears illusions', ru: 'цепная молния выносит иллюзии', uk: 'ланцюгова блискавка зносить ілюзії' } },
+    { item: 'bfury', for: 'core', p: 3, why: { en: 'cleave hits illusions and clones', ru: 'сплеш по иллюзиям и клонам', uk: 'сплеш по ілюзіях і клонах' } },
+    { item: 'maelstrom', for: 'core', p: 2, why: { en: 'cheap lightning against illusions', ru: 'дешёвая молния против иллюзий', uk: 'дешева блискавка проти ілюзій' } },
+    { item: 'radiance', for: 'core', p: 2, why: { en: 'burns a pack of illusions', ru: 'жжёт пачку иллюзий', uk: 'палить пачку ілюзій' } },
+    { item: 'shivas_guard', for: 'core', p: 2, why: { en: 'AoE damage and slow', ru: 'AoE-урон и замедление', uk: 'AoE-шкода та сповільнення' } },
+    { item: 'crimson_guard', for: 'core', pos: [3], p: 1, why: { en: 'blocks damage from many illusions', ru: 'блок урона от толпы иллюзий', uk: 'блок шкоди від натовпу ілюзій' } },
   ],
   evasion: [
-    { item: 'monkey_king_bar', for: 'core', p: 3, why: 'true strike пробивает уклонение' },
-    { item: 'bloodthorn', for: 'core', p: 2, why: 'true strike по цели под сайленсом' },
-    { item: 'javelin', for: 'core', p: 1, why: 'шанс пробить уклонение рано' },
+    { item: 'monkey_king_bar', for: 'core', p: 3, why: { en: 'true strike pierces evasion', ru: 'true strike пробивает уклонение', uk: 'true strike пробиває ухилення' } },
+    { item: 'bloodthorn', for: 'core', p: 2, why: { en: 'true strike on a silenced target', ru: 'true strike по цели под сайленсом', uk: 'true strike по цілі під сайленсом' } },
+    { item: 'javelin', for: 'core', p: 1, why: { en: 'early chance to pierce evasion', ru: 'шанс пробить уклонение рано', uk: 'шанс пробити ухилення рано' } },
   ],
   invis: [
-    { item: 'dust', for: 'any', p: 3, why: 'вскрыть невидимость в драке' },
-    { item: 'ward_sentry', for: 'support', p: 3, why: 'сентри на линии и в лесу' },
-    { item: 'gem', for: 'support', p: 2, why: 'постоянное true sight' },
+    { item: 'dust', for: 'any', p: 3, why: { en: 'reveals invisibility in fights', ru: 'вскрыть невидимость в драке', uk: 'розкрити невидимість у бійці' } },
+    { item: 'ward_sentry', for: 'support', p: 3, why: { en: 'sentries on the lane and in the jungle', ru: 'сентри на линии и в лесу', uk: 'сентрі на лінії та в лісі' } },
+    { item: 'gem', for: 'support', p: 2, why: { en: 'permanent true sight', ru: 'постоянное true sight', uk: 'постійний true sight' } },
   ],
   magic: [
-    { item: 'black_king_bar', for: 'core', p: 3, why: 'иммунитет к магии в драке' },
-    { item: 'pipe', for: 'core', pos: [3], p: 2, why: 'командный барьер от магии' },
-    { item: 'glimmer_cape', for: 'support', p: 3, why: 'барьер от магии и невидимость' },
-    { item: 'cloak', for: 'any', p: 1, why: 'дешёвое сопротивление магии на линии' },
-    { item: 'mage_slayer', for: 'core', p: 1, why: 'режет магический урон врага' },
+    { item: 'black_king_bar', for: 'core', p: 3, why: { en: 'spell immunity in fights', ru: 'иммунитет к магии в драке', uk: 'імунітет до магії в бійці' } },
+    { item: 'pipe', for: 'core', pos: [3], p: 2, why: { en: 'team magic barrier', ru: 'командный барьер от магии', uk: 'командний бар’єр від магії' } },
+    { item: 'glimmer_cape', for: 'support', p: 3, why: { en: 'magic barrier and invisibility', ru: 'барьер от магии и невидимость', uk: 'бар’єр від магії та невидимість' } },
+    { item: 'cloak', for: 'any', p: 1, why: { en: 'cheap magic resistance on the lane', ru: 'дешёвое сопротивление магии на линии', uk: 'дешевий опір магії на лінії' } },
+    { item: 'mage_slayer', for: 'core', p: 1, why: { en: 'reduces enemy spell damage', ru: 'режет магический урон врага', uk: 'ріже магічну шкоду ворога' } },
   ],
   heal: [
-    { item: 'spirit_vessel', for: 'any', p: 2, why: 'режет хил и реген' },
-    { item: 'shivas_guard', for: 'core', p: 2, why: 'аура режет лечение' },
-    { item: 'skadi', for: 'core', p: 2, why: 'атаки режут хил' },
-    { item: 'urn_of_shadows', for: 'support', p: 1, why: 'ранний -хил, потом Vessel' },
+    { item: 'spirit_vessel', for: 'any', p: 2, why: { en: 'cuts healing and regen', ru: 'режет хил и реген', uk: 'ріже хіл і реген' } },
+    { item: 'shivas_guard', for: 'core', p: 2, why: { en: 'aura cuts healing', ru: 'аура режет лечение', uk: 'аура ріже лікування' } },
+    { item: 'skadi', for: 'core', p: 2, why: { en: 'attacks cut healing', ru: 'атаки режут хил', uk: 'атаки ріжуть хіл' } },
+    { item: 'urn_of_shadows', for: 'support', p: 1, why: { en: 'early heal reduction, then Vessel', ru: 'ранний -хил, потом Vessel', uk: 'ранній -хіл, потім Vessel' } },
   ],
   physical: [
-    { item: 'ghost', for: 'support', p: 3, why: 'иммунитет к атакам' },
-    { item: 'force_staff', for: 'support', p: 2, why: 'выдернуть себя или союзника' },
-    { item: 'solar_crest', for: 'support', p: 2, why: 'броня и промахи для керри' },
-    { item: 'assault', for: 'core', p: 2, why: '-броня врагу, +броня своим' },
-    { item: 'blade_mail', for: 'core', pos: [2, 3], p: 2, why: 'отражает урон с руки' },
-    { item: 'heavens_halberd', for: 'core', pos: [3], p: 2, why: 'дизарм керри на 5 сек' },
-    { item: 'crimson_guard', for: 'core', pos: [3], p: 1, why: 'блок урона всей команде' },
+    { item: 'ghost', for: 'support', p: 3, why: { en: 'immune to attacks', ru: 'иммунитет к атакам', uk: 'імунітет до атак' } },
+    { item: 'force_staff', for: 'support', p: 2, why: { en: 'push yourself or an ally out', ru: 'выдернуть себя или союзника', uk: 'висмикнути себе або союзника' } },
+    { item: 'solar_crest', for: 'support', p: 2, why: { en: 'armor and misses for your carry', ru: 'броня и промахи для керри', uk: 'броня та промахи для кері' } },
+    { item: 'assault', for: 'core', p: 2, why: { en: '-armor to enemies, +armor to allies', ru: '-броня врагу, +броня своим', uk: '-броня ворогу, +броня своїм' } },
+    { item: 'blade_mail', for: 'core', pos: [2, 3], p: 2, why: { en: 'returns right-click damage', ru: 'отражает урон с руки', uk: 'відбиває шкоду з руки' } },
+    { item: 'heavens_halberd', for: 'core', pos: [3], p: 2, why: { en: 'disarms the carry for 5 s', ru: 'дизарм керри на 5 сек', uk: 'дизарм кері на 5 с' } },
+    { item: 'crimson_guard', for: 'core', pos: [3], p: 1, why: { en: 'damage block for the whole team', ru: 'блок урона всей команде', uk: 'блок шкоди всій команді' } },
   ],
   passive: [
-    { item: 'silver_edge', for: 'core', p: 3, why: 'break отключает пассивки' },
-    { item: 'nullifier', for: 'core', p: 1, why: 'снимает баффы и не даёт их наложить' },
+    { item: 'silver_edge', for: 'core', p: 3, why: { en: 'break disables passives', ru: 'break отключает пассивки', uk: 'break вимикає пасивки' } },
+    { item: 'nullifier', for: 'core', p: 1, why: { en: 'purges buffs and blocks new ones', ru: 'снимает баффы и не даёт их наложить', uk: 'знімає баффи й не дає їх накласти' } },
   ],
   buffs: [
-    { item: 'nullifier', for: 'core', p: 3, why: 'постоянно снимает баффы' },
-    { item: 'diffusal_blade', for: 'core', p: 2, why: 'диспел и замедление' },
-    { item: 'cyclone', for: 'support', p: 1, why: 'Eul снимает баффы с врага' },
+    { item: 'nullifier', for: 'core', p: 3, why: { en: 'keeps purging buffs', ru: 'постоянно снимает баффы', uk: 'постійно знімає баффи' } },
+    { item: 'diffusal_blade', for: 'core', p: 2, why: { en: 'dispel and slow', ru: 'диспел и замедление', uk: 'диспел і сповільнення' } },
+    { item: 'cyclone', for: 'support', p: 1, why: { en: 'Eul’s purges enemy buffs', ru: 'Eul снимает баффы с врага', uk: 'Eul знімає баффи з ворога' } },
   ],
   mobility: [
-    { item: 'orchid', for: 'core', p: 2, why: 'сайленс до прыжка' },
-    { item: 'sheepstick', for: 'core', p: 2, why: 'хекс без шанса сбежать' },
-    { item: 'abyssal_blade', for: 'core', p: 2, why: 'стан сквозь BKB' },
-    { item: 'rod_of_atos', for: 'support', p: 3, why: 'рут не даёт убежать' },
-    { item: 'gungir', for: 'core', p: 1, why: 'AoE-рут' },
+    { item: 'orchid', for: 'core', p: 2, why: { en: 'silence before they jump', ru: 'сайленс до прыжка', uk: 'сайленс до стрибка' } },
+    { item: 'sheepstick', for: 'core', p: 2, why: { en: 'hex — no way to escape', ru: 'хекс без шанса сбежать', uk: 'хекс без шансу втекти' } },
+    { item: 'abyssal_blade', for: 'core', p: 2, why: { en: 'stun through BKB', ru: 'стан сквозь BKB', uk: 'стан крізь BKB' } },
+    { item: 'rod_of_atos', for: 'support', p: 3, why: { en: 'root stops the escape', ru: 'рут не даёт убежать', uk: 'рут не дає втекти' } },
+    { item: 'gungir', for: 'core', p: 1, why: { en: 'AoE root', ru: 'AoE-рут', uk: 'AoE-рут' } },
   ],
   mana: [
-    { item: 'diffusal_blade', for: 'core', p: 3, why: 'выжигает ману' },
-    { item: 'nullifier', for: 'core', p: 1, why: 'мешает прожать спасение' },
+    { item: 'diffusal_blade', for: 'core', p: 3, why: { en: 'burns mana', ru: 'выжигает ману', uk: 'випалює ману' } },
+    { item: 'nullifier', for: 'core', p: 1, why: { en: 'stops their save items', ru: 'мешает прожать спасение', uk: 'заважає прожати порятунок' } },
   ],
   single: [
-    { item: 'sphere', for: 'core', p: 3, why: 'Linken блокирует точечный ульт' },
-    { item: 'lotus_orb', for: 'any', p: 2, why: 'отражает точечное заклинание' },
-    { item: 'aeon_disk', for: 'core', p: 1, why: 'страховка от бурста' },
-    { item: 'glimmer_cape', for: 'support', p: 2, why: 'спасти союзника под ультом' },
+    { item: 'sphere', for: 'core', p: 3, why: { en: 'Linken’s blocks the targeted ultimate', ru: 'Linken блокирует точечный ульт', uk: 'Linken блокує точковий ульт' } },
+    { item: 'lotus_orb', for: 'any', p: 2, why: { en: 'reflects a targeted spell', ru: 'отражает точечное заклинание', uk: 'відбиває точкове закляття' } },
+    { item: 'aeon_disk', for: 'core', p: 1, why: { en: 'insurance against burst', ru: 'страховка от бурста', uk: 'страховка від бурсту' } },
+    { item: 'glimmer_cape', for: 'support', p: 2, why: { en: 'save an ally under the ultimate', ru: 'спасти союзника под ультом', uk: 'врятувати союзника під ультом' } },
   ],
   disable: [
-    { item: 'black_king_bar', for: 'core', p: 3, why: 'иммунитет к массовому контролю' },
-    { item: 'force_staff', for: 'support', p: 2, why: 'вытащить из Black Hole/ульта' },
-    { item: 'aeon_disk', for: 'core', p: 1, why: 'переживёт прокаст' },
-    { item: 'blink', for: 'any', p: 1, why: 'держать дистанцию и не попадать под AoE' },
+    { item: 'black_king_bar', for: 'core', p: 3, why: { en: 'immune to mass disables', ru: 'иммунитет к массовому контролю', uk: 'імунітет до масового контролю' } },
+    { item: 'force_staff', for: 'support', p: 2, why: { en: 'pull out of Black Hole / ultimates', ru: 'вытащить из Black Hole/ульта', uk: 'витягнути з Black Hole / ульта' } },
+    { item: 'aeon_disk', for: 'core', p: 1, why: { en: 'survives the combo', ru: 'переживёт прокаст', uk: 'переживе прокаст' } },
+    { item: 'blink', for: 'any', p: 1, why: { en: 'keep distance, dodge the AoE', ru: 'держать дистанцию и не попадать под AoE', uk: 'тримати дистанцію й не потрапляти під AoE' } },
   ],
   summons: [
-    { item: 'bfury', for: 'core', p: 2, why: 'сплеш по призывам' },
-    { item: 'mjollnir', for: 'core', p: 2, why: 'молния по крипам и призывам' },
-    { item: 'crimson_guard', for: 'core', pos: [3], p: 2, why: 'блок урона от призывов' },
-    { item: 'shivas_guard', for: 'core', p: 1, why: 'AoE-урон по призывам' },
-    { item: 'mekansm', for: 'support', p: 1, why: 'хил команде против пуша' },
+    { item: 'bfury', for: 'core', p: 2, why: { en: 'cleave through summons', ru: 'сплеш по призывам', uk: 'сплеш по призовах' } },
+    { item: 'mjollnir', for: 'core', p: 2, why: { en: 'lightning hits creeps and summons', ru: 'молния по крипам и призывам', uk: 'блискавка по крипах і призовах' } },
+    { item: 'crimson_guard', for: 'core', pos: [3], p: 2, why: { en: 'blocks damage from summons', ru: 'блок урона от призывов', uk: 'блок шкоди від призовів' } },
+    { item: 'shivas_guard', for: 'core', p: 1, why: { en: 'AoE damage on summons', ru: 'AoE-урон по призывам', uk: 'AoE-шкода по призовах' } },
+    { item: 'mekansm', for: 'support', p: 1, why: { en: 'team heal against pushes', ru: 'хил команде против пуша', uk: 'хіл команді проти пушу' } },
   ],
   armor: [
-    { item: 'desolator', for: 'core', p: 3, why: '-броня для убийства танка' },
-    { item: 'assault', for: 'core', p: 2, why: '-броня аурой' },
-    { item: 'solar_crest', for: 'support', p: 2, why: '-броня на цель' },
-    { item: 'skadi', for: 'core', p: 1, why: 'режет хил и замедляет танка' },
+    { item: 'desolator', for: 'core', p: 3, why: { en: '-armor to kill the tank', ru: '-броня для убийства танка', uk: '-броня, щоб убити танка' } },
+    { item: 'assault', for: 'core', p: 2, why: { en: '-armor aura', ru: '-броня аурой', uk: '-броня аурою' } },
+    { item: 'solar_crest', for: 'support', p: 2, why: { en: '-armor on the target', ru: '-броня на цель', uk: '-броня на ціль' } },
+    { item: 'skadi', for: 'core', p: 1, why: { en: 'cuts healing and slows the tank', ru: 'режет хил и замедляет танка', uk: 'ріже хіл і сповільнює танка' } },
   ],
   silence: [
-    { item: 'manta', for: 'core', p: 3, why: 'диспел сайленса' },
-    { item: 'lotus_orb', for: 'any', p: 2, why: 'диспел и отражение' },
-    { item: 'black_king_bar', for: 'core', p: 2, why: 'иммунитет к сайленсу' },
-    { item: 'cyclone', for: 'support', p: 1, why: 'Eul сбивает сайленс с себя' },
+    { item: 'manta', for: 'core', p: 3, why: { en: 'dispels silence', ru: 'диспел сайленса', uk: 'диспел сайленсу' } },
+    { item: 'lotus_orb', for: 'any', p: 2, why: { en: 'dispel and reflect', ru: 'диспел и отражение', uk: 'диспел і відбиття' } },
+    { item: 'black_king_bar', for: 'core', p: 2, why: { en: 'immune to silence', ru: 'иммунитет к сайленсу', uk: 'імунітет до сайленсу' } },
+    { item: 'cyclone', for: 'support', p: 1, why: { en: 'Eul’s removes silence from you', ru: 'Eul сбивает сайленс с себя', uk: 'Eul збиває сайленс із себе' } },
   ],
 };
 
-// Предметы, которые однозначно «саппортские» или «коровые» (для фильтра статистики по позиции)
+// Clearly support / core items (used to filter hero statistics by position)
 const SUPPORT_ITEMS = new Set([
   'ward_observer', 'ward_sentry', 'ward_dispenser', 'smoke_of_deceit', 'dust', 'gem', 'tranquil_boots', 'arcane_boots',
   'glimmer_cape', 'force_staff', 'ghost', 'solar_crest', 'pavise', 'mekansm', 'guardian_greaves', 'holy_locket',
@@ -266,22 +267,17 @@ const CORE_ITEMS = new Set([
   'mjollnir', 'disperser', 'desolator', 'hand_of_midas', 'diffusal_blade', 'heart', 'assault', 'bloodthorn',
   'silver_edge', 'black_king_bar', 'maelstrom', 'mask_of_madness', 'power_treads', 'echo_sabre', 'harpoon',
   'kaya_and_sange', 'sange_and_yasha', 'yasha_and_kaya', 'bloodstone', 'sange', 'yasha', 'bottle', 'shivas_guard',
-  'manta', 'mage_slayer', 'phase_boots', 'witch_blade', 'revenants_brooch', 'falcon_blade', 'orchid',
+  'mage_slayer', 'phase_boots', 'witch_blade', 'revenants_brooch', 'falcon_blade', 'orchid',
 ]);
-// Расходники и компоненты, которые не показываем как «предмет билда»
+// Consumables and components that are never shown as build items
 const SKIP_ITEMS = new Set([
   'tango', 'flask', 'clarity', 'enchanted_mango', 'faerie_fire', 'tpscroll', 'branches', 'ward_observer', 'ward_sentry',
   'ward_dispenser', 'smoke_of_deceit', 'dust', 'blood_grenade', 'aghanims_shard_roshan', 'cheese', 'refresher_shard',
   'aegis', 'ultimate_scepter_roshan',
 ]);
-const STARTING_ITEMS = new Set([
-  'tango', 'flask', 'clarity', 'enchanted_mango', 'faerie_fire', 'branches', 'quelling_blade', 'magic_stick',
-  'gauntlets', 'slippers', 'mantle', 'circlet', 'ring_of_protection', 'orb_of_venom', 'blight_stone', 'blood_grenade',
-  'wind_lace', 'ward_observer', 'ward_sentry', 'stout_shield', 'crown', 'boots',
-]);
 
-// На каких позициях предмет вообще уместен. Правило снимается, если по гайдам Dotabuff
-// топ-игроки реально собирают этот предмет на этом герое на этой позиции (≥20% матчей).
+// Positions where an item makes sense at all. The rule is lifted when Dotabuff Guides show that
+// top players actually build this item on this hero in this position.
 const ITEM_POS = {
   bottle: [2],
   hand_of_midas: [1, 2],
@@ -302,8 +298,8 @@ const ITEM_POS = {
   sheepstick: [2, 3, 4, 5], blade_mail: [2, 3], javelin: [1, 2], mage_slayer: [1, 2, 3], gungir: [1, 2, 3],
 };
 
-// Командные предметы: на всю команду нужен один (или два) — советуем тому, кому подходит лучше.
-// pref — позиции в порядке предпочтения.
+// Team items: the team needs one (or two) — suggest them to whoever fits best.
+// pref — positions in order of preference.
 const TEAM_ITEMS = {
   spirit_vessel: { max: 1, pref: [4, 3, 5] },
   urn_of_shadows: { max: 1, pref: [4, 5] },
@@ -322,12 +318,12 @@ const TEAM_ITEMS = {
   vladmir: { max: 1, pref: [4, 3, 5] },
 };
 
-// Предметы «под атаку»: советуем их как контр-предмет только героям, которые реально их собирают
+// Attack-based items: suggested as counters only to heroes who actually build them
 const ATTACK_ITEMS = new Set([
   'monkey_king_bar', 'bloodthorn', 'javelin', 'silver_edge', 'diffusal_blade', 'desolator', 'bfury', 'mjollnir',
   'maelstrom', 'skadi', 'abyssal_blade', 'nullifier', 'orchid', 'radiance', 'gungir', 'mage_slayer', 'assault',
 ]);
 
 window.DBCP_KB = {
-  THREAT_INFO, THREATS, COUNTER_ITEMS, SUPPORT_ITEMS, CORE_ITEMS, SKIP_ITEMS, STARTING_ITEMS, ATTACK_ITEMS, ITEM_POS, TEAM_ITEMS,
+  THREAT_INFO, THREATS, COUNTER_ITEMS, SUPPORT_ITEMS, CORE_ITEMS, SKIP_ITEMS, ATTACK_ITEMS, ITEM_POS, TEAM_ITEMS,
 };

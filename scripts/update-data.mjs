@@ -1,34 +1,44 @@
-// Обновление data.js с Dotabuff для GitHub Actions (и любого Linux/macOS/Windows с Node и Chrome).
-// Открывает dotabuff.com в настоящем Google Chrome и выполняет scraper.js через DevTools-протокол —
-// так же, как update-data.ps1 на Windows. data.js перезаписывается только при успешном сборе.
+// Updates data.js from Dotabuff (GitHub Actions, or any Linux/macOS/Windows with Node and Chrome).
+// Opens dotabuff.com in a real Google Chrome and runs scraper.js through the DevTools protocol —
+// the same approach as update-data.ps1 on Windows. data.js is overwritten only on success.
 //
-//   npm i --no-save playwright
-//   node scripts/update-data.mjs            # видимый Chrome (в CI — под xvfb-run)
-//   HEADLESS=1 node scripts/update-data.mjs # без окна
-import { chromium } from 'playwright';
-import { readFile, writeFile, rename } from 'node:fs/promises';
+// Dotabuff sits behind Cloudflare, which is strict with datacenter IPs. We first try Patchright
+// (an undetected Playwright fork), then plain Playwright, headed (under xvfb in CI) and headless.
+//
+//   npm i --no-save patchright playwright
+//   node scripts/update-data.mjs              # headed Chrome (use xvfb-run in CI)
+//   HEADLESS=1 node scripts/update-data.mjs   # headless only
+import { readFile, writeFile, rename, mkdtemp } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const scraper = await readFile(path.join(root, 'scraper.js'), 'utf8');
 const date = process.env.DOTABUFF_DATE || '';
+const channel = process.env.CHROME_CHANNEL || 'chrome';
 
-async function attempt(headless) {
-  const browser = await chromium.launch({
-    channel: process.env.CHROME_CHANNEL || 'chrome',
-    headless,
-    args: ['--disable-blink-features=AutomationControlled', '--no-first-run', '--no-default-browser-check'],
+async function loadEngine(name) {
+  try { return (await import(name)).chromium; } catch { return null; }
+}
+
+async function attempt(engineName, headless) {
+  const chromium = await loadEngine(engineName);
+  if (!chromium) throw new Error(`${engineName} is not installed`);
+  // a persistent context with default settings looks the most like a regular browser
+  const userDir = await mkdtemp(path.join(tmpdir(), 'dbcp-'));
+  const context = await chromium.launchPersistentContext(userDir, {
+    channel, headless, viewport: null,
+    ...(engineName === 'playwright' ? { args: ['--disable-blink-features=AutomationControlled'], locale: 'en-US' } : {}),
   });
   try {
-    const context = await browser.newContext({ locale: 'en-US', viewport: { width: 1366, height: 900 } });
-    const page = await context.newPage();
+    const page = context.pages()[0] || await context.newPage();
     await page.goto('https://www.dotabuff.com/heroes', { waitUntil: 'domcontentloaded', timeout: 60_000 });
-    // ждём, пока пройдёт возможная проверка Cloudflare
-    await page.waitForFunction(() => /DOTABUFF/i.test(document.title), null, { timeout: 90_000 });
-    console.log('Dotabuff открыт, собираю контрпики…');
+    // wait until a possible Cloudflare check passes
+    await page.waitForFunction(() => /DOTABUFF/i.test(document.title), null, { timeout: 120_000 });
+    console.log('Dotabuff is open, collecting data…');
 
-    // Runtime.evaluate не подчиняется CSP страницы — как в update-data.ps1
+    // Runtime.evaluate is not subject to the page's CSP — same as update-data.ps1
     const cdp = await context.newCDPSession(page);
     const expression =
       `window.DBCP_NO_AUTORUN = true;\n${scraper}\n;` +
@@ -37,33 +47,37 @@ async function attempt(headless) {
     if (res.exceptionDetails) throw new Error(res.exceptionDetails.exception?.description || res.exceptionDetails.text);
     return res.result.value;
   } finally {
-    await browser.close();
+    await context.close();
   }
 }
 
+const plans = process.env.HEADLESS === '1'
+  ? [['patchright', true], ['playwright', true]]
+  : [['patchright', false], ['playwright', false], ['playwright', true]];
+
 let json = null;
-const modes = process.env.HEADLESS === '1' ? [true] : [false, true];
-for (const headless of modes) {
+for (const [engine, headless] of plans) {
   try {
-    json = await attempt(headless);
+    console.log(`Trying ${engine} (headless=${headless})…`);
+    json = await attempt(engine, headless);
     break;
   } catch (e) {
-    console.warn(`Попытка (headless=${headless}) не удалась:`, e.message);
+    console.warn(`  failed: ${e.message.split('\n')[0]}`);
   }
 }
 if (!json) {
-  console.error('Не удалось собрать данные — data.js не изменён');
+  console.error('Could not collect the data — data.js left unchanged');
   process.exit(1);
 }
 
 const data = JSON.parse(json);
 const count = Object.keys(data.m).length;
 if (count < 100) {
-  console.error(`Собрано слишком мало героев (${count}) — data.js не изменён`);
+  console.error(`Too few heroes collected (${count}) — data.js left unchanged`);
   process.exit(1);
 }
 
 const file = path.join(root, 'data.js');
 await writeFile(file + '.tmp', `window.DBCP_DATA = ${json};\n`, 'utf8');
 await rename(file + '.tmp', file);
-console.log(`Готово: ${count} героев, дата ${data.updated}` + (data.failed?.length ? `, проблемы: ${data.failed.join(', ')}` : ''));
+console.log(`Done: ${count} heroes, ${data.period}, ${data.updated}` + (data.failed?.length ? `, problems: ${data.failed.join(', ')}` : ''));

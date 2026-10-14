@@ -1,21 +1,22 @@
 /*
- * DotaBuffCP — сборщик данных с Dotabuff.
+ * DotaBuffCP — Dotabuff data collector.
  *
- * Собирает по текущему патчу:
- *   • контрпики   /heroes/<hero>/counters  — disadvantage, винрейт, матчи
- *   • линии       /heroes/lanes?lane=...   — доля игр, винрейт и GPM героя на каждой линии (→ позиции 1–5)
- *   • предметы    /heroes/<hero>/items     — популярность и винрейт предметов
+ * Collects for the current patch:
+ *   • counters  /heroes/<hero>/counters  — disadvantage, win rate, matches
+ *   • lanes     /heroes/lanes?lane=...   — game share, win rate and GPM of each hero per lane (→ positions 1–5)
+ *   • items     /heroes/<hero>/items     — item popularity and win rate
+ *   • guides    /heroes/<hero>/guides    — recent top-player matches: lane, role, item timings
  *
- * Обычно запускается автоматически (scripts/update-data.mjs в GitHub Actions или update-data.ps1).
- * Вручную: откройте https://www.dotabuff.com, консоль (F12 → Console), вставьте файл целиком, Enter.
- * Через пару минут скачается data.js.
+ * Normally runs automatically (scripts/update-data.mjs in GitHub Actions or update-data.ps1).
+ * Manually: open https://www.dotabuff.com, the console (F12 → Console), paste the whole file, press Enter.
+ * data.js downloads in a few minutes.
  */
 async function dbcpScrape(opts) {
-  // download: false — не скачивать файл, только вернуть данные (так вызывают скрипты обновления)
+  // download: false — don't download a file, just return the data (used by the update scripts)
   opts = Object.assign({ concurrency: 3, delay: 250, date: '', download: true, minMatches: 1000 }, opts || {});
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  // та же нормализация, что в app.js
+  // same normalization as in app.js
   const NAME_FIX = { outworlddevourer: 'outworlddestroyer', skeletonking: 'wraithking', windrunner: 'windranger' };
   const norm = (s) => {
     const k = String(s).toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -26,7 +27,7 @@ async function dbcpScrape(opts) {
     return Number.isFinite(v) ? v : null;
   };
 
-  // маленький индикатор прогресса поверх страницы
+  // a small progress indicator on top of the page
   const box = document.createElement('div');
   box.style.cssText =
     'position:fixed;z-index:2147483647;right:16px;bottom:16px;padding:12px 16px;' +
@@ -43,7 +44,7 @@ async function dbcpScrape(opts) {
       if (res.status === 429 || res.status >= 500) { await sleep(2500 * (attempt + 1)); continue; }
       throw new Error(path + ' → HTTP ' + res.status);
     }
-    throw new Error(path + ' → слишком много повторов');
+    throw new Error(path + ' → too many retries');
   }
 
   async function pool(list, fn) {
@@ -57,7 +58,7 @@ async function dbcpScrape(opts) {
     }));
   }
 
-  // Самая большая таблица, где в строке есть ссылка /<kind>/<slug> и числа после имени.
+  // The biggest table whose rows contain a /<kind>/<slug> link followed by numbers.
   function parseTable(doc, kind, minNums) {
     let best = [];
     doc.querySelectorAll('table').forEach((table) => {
@@ -102,14 +103,14 @@ async function dbcpScrape(opts) {
   const heroes = {}; // slug -> {name, img}
   const raw = {};    // slug -> rows
 
-  // ---------- период: текущий патч, если матчей уже достаточно, иначе последняя неделя ----------
-  status('определяю текущий патч…');
+  // ---------- period: the current patch if it has enough matches, otherwise the last week ----------
+  status('detecting the current patch…');
   let period = opts.date;
   let periodLabel = opts.date;
   let first = null;
   if (!period) {
     const base = await get('/heroes/anti-mage/counters');
-    if (!base) throw new Error('Не удалось открыть страницу counters');
+    if (!base) throw new Error('Could not open the counters page');
     const label = (v) => {
       const o = base.querySelector(`select[name="date"] option[value="${v}"]`);
       return o ? o.textContent.trim() : v;
@@ -129,13 +130,13 @@ async function dbcpScrape(opts) {
   }
   const q = 'date=' + encodeURIComponent(period);
 
-  // ---------- контрпики ----------
-  status(`период: ${periodLabel}, загружаю список героев…`);
+  // ---------- counters ----------
+  status(`period: ${periodLabel}, loading the hero list…`);
   if (!first) first = await get('/heroes/anti-mage/counters?' + q);
-  if (!first) throw new Error('Не удалось открыть страницу counters');
+  if (!first) throw new Error('Could not open the counters page');
   raw['anti-mage'] = parseCounters(first);
   if (raw['anti-mage'].length < 50) {
-    status('не нашёл таблицу контрпиков — разметка Dotabuff изменилась.');
+    status('counters table not found — Dotabuff markup has changed.');
     throw new Error('counters table not found');
   }
   heroes['anti-mage'] = { name: 'Anti-Mage', img: '' };
@@ -157,12 +158,12 @@ async function dbcpScrape(opts) {
       console.warn('[DotaBuffCP]', e);
       failed.push(slug);
     }
-    status(`контрпики ${++done}/${total} (${heroes[slug].name})`);
+    status(`counters ${++done}/${total} (${heroes[slug].name})`);
   });
 
-  // Колонка «Win Rate» может означать винрейт любой из сторон. Disadvantage героя X
-  // против Y и винрейт X против Y должны коррелировать отрицательно — по знаку
-  // корреляции определяем, чей это винрейт, и приводим к «винрейт кандидата против врага».
+  // The "Win Rate" column may belong to either side. Hero X's disadvantage against Y
+  // and X's win rate against Y must correlate negatively — the sign of the correlation
+  // tells whose win rate it is; we store it as "candidate's win rate against the enemy".
   let sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0, n = 0;
   for (const s in raw) for (const r of raw[s]) {
     sx += r.disadv; sy += r.wr; sxx += r.disadv * r.disadv; syy += r.wr * r.wr; sxy += r.disadv * r.wr; n++;
@@ -170,10 +171,10 @@ async function dbcpScrape(opts) {
   const corr = (n * sxy - sx * sy) / Math.sqrt((n * sxx - sx * sx) * (n * syy - sy * sy) || 1);
   const wrIsEnemys = corr < 0;
 
-  // ---------- линии: доля игр / винрейт / GPM на каждой линии ----------
+  // ---------- lanes: game share / win rate / GPM per lane ----------
   const lanes = {};
   for (const lane of ['safe', 'mid', 'off', 'jungle', 'roaming']) {
-    status(`линии: ${lane}`);
+    status(`lanes: ${lane}`);
     try {
       const doc = await get(`/heroes/lanes?lane=${lane}&${q}`);
       if (!doc) continue;
@@ -189,7 +190,7 @@ async function dbcpScrape(opts) {
     await sleep(opts.delay);
   }
 
-  // ---------- предметы ----------
+  // ---------- items ----------
   const games = {};
   for (const slug in raw) games[slug] = Math.round(raw[slug].reduce((s, r) => s + r.matches, 0) / 5);
   const items = {};
@@ -210,11 +211,11 @@ async function dbcpScrape(opts) {
       console.warn('[DotaBuffCP] items', slug, e);
       failed.push('items:' + slug);
     }
-    status(`предметы ${++done}/${total} (${heroes[slug].name})`);
+    status(`items ${++done}/${total} (${heroes[slug].name})`);
   });
 
-  // ---------- гайды: свежие матчи топ-игроков с линией, ролью и таймингами предметов ----------
-  // линия + роль → позиция: safe core 1, mid 2, off core 3, off support 4, safe support 5, roaming 4
+  // ---------- guides: recent top-player matches with lane, role and item timings ----------
+  // lane + role → position: safe core 1, mid 2, off core 3, off support 4, safe support 5, roaming 4
   const guidePos = (lane, role) => {
     if (/mid/.test(lane)) return role === 'support' ? 4 : 2;
     if (/safe/.test(lane)) return role === 'support' ? 5 : 1;
@@ -262,7 +263,7 @@ async function dbcpScrape(opts) {
         break;
       }
     }
-    // по позициям: сколько матчей, побед и для каждого предмета — в скольких матчах и медианная минута
+    // per position: matches, wins and, for each item, in how many matches and the median minute
     const byPos = {};
     for (const g of list) {
       const p = (byPos[g.pos] = byPos[g.pos] || { n: 0, w: 0, items: {} });
@@ -282,7 +283,7 @@ async function dbcpScrape(opts) {
     }
     guides[norm(heroes[slug].name)] = byPos;
     if (!list.length) failed.push('guides:' + slug);
-    status(`гайды ${++done}/${total} (${heroes[slug].name})`);
+    status(`guides ${++done}/${total} (${heroes[slug].name})`);
   });
 
   const out = {
@@ -308,7 +309,7 @@ async function dbcpScrape(opts) {
     const row = (out.m[norm(heroes[slug].name)] = {});
     for (const r of raw[slug]) {
       const wr = wrIsEnemys ? 100 - r.wr : r.wr;
-      // disadvantage врага против кандидата = преимущество кандидата
+      // the enemy's disadvantage against the candidate = the candidate's advantage
       row[norm(r.name)] = [+r.disadv.toFixed(2), +wr.toFixed(2), r.matches];
     }
   }
@@ -324,8 +325,8 @@ async function dbcpScrape(opts) {
     a.remove();
   }
 
-  status(`готово: ${Object.keys(out.m).length} героев` +
-    (failed.length ? `, проблемы с: ${failed.join(', ')}` : '') + (opts.download ? '. Файл data.js скачан.' : '.'));
+  status(`done: ${Object.keys(out.m).length} heroes` +
+    (failed.length ? `, problems with: ${failed.join(', ')}` : '') + (opts.download ? '. data.js downloaded.' : '.'));
   setTimeout(() => box.remove(), 15000);
   return out;
 }
