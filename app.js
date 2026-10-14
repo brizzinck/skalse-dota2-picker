@@ -1,6 +1,6 @@
 'use strict';
 /*
- * Skalse Picker — draft, positions and counter-pick suggestions.
+ * Skalse Dota 2 Picker — draft, positions and counter-pick suggestions.
  * Item builds live in builds.js, translations in i18n.js, the knowledge base in knowledge.js.
  */
 

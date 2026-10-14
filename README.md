@@ -1,10 +1,10 @@
-# Skalse Picker — Dota 2
+# skalse-dota2-picker
 
 A Dota 2 counter picker with position-aware suggestions and item builds, based on
 [Stratz](https://stratz.com) and [Dotabuff](https://www.dotabuff.com) statistics
 (with [OpenDota](https://www.opendota.com) as a live fallback).
 
-**Live site:** https://brizzinck.github.io/dota-analysis/ — Ukrainian by default, Russian and English selectable.
+**Live site:** https://brizzinck.github.io/skalse-dota2-picker/ — Ukrainian by default, Russian and English selectable.
 No server needed: it is a static site, you can also just open `index.html`.
 
 ## Features

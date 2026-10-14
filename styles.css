@@ -82,7 +82,19 @@ code { font-size: 12px; padding: 1px 5px; border-radius: 4px; background: var(--
 .brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .brand-mark { width: 40px; height: 40px; border-radius: 10px; display: block; flex: none; box-shadow: 0 4px 16px rgba(229, 180, 83, .25); }
 .brand-text { min-width: 0; }
-.brand-title { font: 700 20px/1 Rajdhani, sans-serif; letter-spacing: .5px; }
+.brand-title { display: flex; align-items: center; gap: 8px; line-height: 1; }
+.wordmark {
+  font: 700 23px/1 Rajdhani, sans-serif; letter-spacing: 3px;
+  background: linear-gradient(180deg, #ffe29a 0%, var(--accent) 55%, #b9821f 100%);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  text-shadow: 0 2px 14px rgba(229, 180, 83, .18);
+}
+.brand-tag {
+  font: 700 10px/1 Inter, system-ui, sans-serif; letter-spacing: 1.2px; text-transform: uppercase;
+  color: var(--muted); padding: 4px 7px; border-radius: 6px;
+  border: 1px solid var(--line-2);
+  background: linear-gradient(90deg, var(--enemy-soft), var(--ally-soft));
+}
 .brand-sub { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; margin-top: 4px; }
 .brand-sub span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .data-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--good); box-shadow: 0 0 0 3px rgba(76, 207, 144, .18); flex: none; }
@@ -598,7 +610,8 @@ code { font-size: 12px; padding: 1px 5px; border-radius: 4px; background: var(--
 }
 @media (max-width: 760px) {
   .topbar { padding: 10px 14px; }
-  .brand-title { font-size: 18px; }
+  .wordmark { font-size: 20px; letter-spacing: 2px; }
+  .brand-tag { font-size: 9px; padding: 3px 6px; }
   .topbar-actions { width: 100%; }
   .topbar-actions .btn span:not(.btn-icon) { display: none; }
   .topbar-actions .btn { padding: 9px 11px; }

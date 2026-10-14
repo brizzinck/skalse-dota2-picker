@@ -1,5 +1,5 @@
 /*
- * Skalse Picker — Dotabuff data collector.
+ * Skalse Dota 2 Picker — Dotabuff data collector.
  *
  * Collects for the current patch:
  *   • counters  /heroes/<hero>/counters  — disadvantage, win rate, matches
