@@ -187,8 +187,8 @@ const I18N = {
     'footer.source': 'Source code',
 
     'help.title': 'How to use',
-    'help.1': 'Type a hero name anywhere — <kbd>Enter</kbd> adds it to the enemies, <kbd>Shift</kbd>+<kbd>Enter</kbd> to your team, <kbd>Alt</kbd>+<kbd>Enter</kbd> bans it.',
-    'help.2': 'Left click — enemies, right click — your team, <kbd>Shift</kbd>+click — ban. Click a picked hero to remove it.',
+    'help.1': 'Type a hero name anywhere — <kbd>Enter</kbd> adds it to the enemies, <kbd>Shift</kbd>/<kbd>Alt</kbd>+<kbd>Enter</kbd> to your team, <kbd>Ctrl</kbd>+<kbd>Enter</kbd> bans it.',
+    'help.2': 'Left click — enemies, right click — your team, <kbd>Shift</kbd>+click — ban. Hold <kbd>Alt</kbd> for “your team” mode: the grid shows each hero’s advantage and clicks add allies. Click a picked hero to remove it.',
     'help.3': '<kbd>Backspace</kbd> in an empty search removes the last enemy, <kbd>Esc</kbd> clears the search.',
     'help.4': 'Positions 1–5 under each hero are set automatically from patch statistics; click a number to fix it.',
     'help.5': '“Picking for” limits suggestions to heroes of that position and adds its meta; “Any” is a pure counter-pick.',
@@ -376,8 +376,8 @@ const I18N = {
     'footer.source': 'Исходный код',
 
     'help.title': 'Как пользоваться',
-    'help.1': 'Начните печатать имя героя где угодно — <kbd>Enter</kbd> добавит во враги, <kbd>Shift</kbd>+<kbd>Enter</kbd> к своим, <kbd>Alt</kbd>+<kbd>Enter</kbd> в баны.',
-    'help.2': 'ЛКМ — во враги, ПКМ — к своим, <kbd>Shift</kbd>+клик — бан. Клик по выбранному герою убирает его.',
+    'help.1': 'Начните печатать имя героя где угодно — <kbd>Enter</kbd> добавит во враги, <kbd>Shift</kbd>/<kbd>Alt</kbd>+<kbd>Enter</kbd> к своим, <kbd>Ctrl</kbd>+<kbd>Enter</kbd> в баны.',
+    'help.2': 'ЛКМ — во враги, ПКМ — к своим, <kbd>Shift</kbd>+клик — бан. Зажмите <kbd>Alt</kbd> — режим «свои»: на сетке видно преимущество героев, клик добавляет к своим. Клик по выбранному герою убирает его.',
     'help.3': '<kbd>Backspace</kbd> в пустом поиске убирает последнего врага, <kbd>Esc</kbd> очищает поиск.',
     'help.4': 'Позиции 1–5 под героями расставляются автоматически по статистике патча; клик по цифре фиксирует позицию.',
     'help.5': '«Пикаю на» оставляет в рекомендациях только героев этой позиции и добавляет её мету; «Любая» — чистый контрпик.',
@@ -565,8 +565,8 @@ const I18N = {
     'footer.source': 'Вихідний код',
 
     'help.title': 'Як користуватися',
-    'help.1': 'Почніть вводити ім’я героя будь-де — <kbd>Enter</kbd> додасть до ворогів, <kbd>Shift</kbd>+<kbd>Enter</kbd> до своїх, <kbd>Alt</kbd>+<kbd>Enter</kbd> у бани.',
-    'help.2': 'ЛКМ — до ворогів, ПКМ — до своїх, <kbd>Shift</kbd>+клік — бан. Клік по обраному герою прибирає його.',
+    'help.1': 'Почніть вводити ім’я героя будь-де — <kbd>Enter</kbd> додасть до ворогів, <kbd>Shift</kbd>/<kbd>Alt</kbd>+<kbd>Enter</kbd> до своїх, <kbd>Ctrl</kbd>+<kbd>Enter</kbd> у бани.',
+    'help.2': 'ЛКМ — до ворогів, ПКМ — до своїх, <kbd>Shift</kbd>+клік — бан. Затисніть <kbd>Alt</kbd> — режим «свої»: на сітці видно перевагу героїв, клік додає до своїх. Клік по обраному герою прибирає його.',
     'help.3': '<kbd>Backspace</kbd> у порожньому пошуку прибирає останнього ворога, <kbd>Esc</kbd> очищає пошук.',
     'help.4': 'Позиції 1–5 під героями розставляються автоматично за статистикою патчу; клік по цифрі фіксує позицію.',
     'help.5': '«Пікаю на» залишає в рекомендаціях лише героїв цієї позиції та додає її мету; «Будь-яка» — чистий контрпік.',

@@ -14,9 +14,11 @@ No server needed: it is a static site, you can also just open `index.html`.
 - Hero grid grouped by attribute, as in the game client. Once enemies are picked, every portrait shows its total
   advantage (green border — good pick, red — bad).
 - Fast search with aliases (`am`, `qop`, `sf`, `wk`, `kotl`…). Type anywhere: `Enter` → enemies,
-  `Shift+Enter` → your team, `Alt+Enter` → ban, `Backspace` in an empty search removes the last enemy.
+  `Shift/Alt+Enter` → your team, `Ctrl+Enter` → ban, `Backspace` in an empty search removes the last enemy.
 - Left click → enemies, right click → your team, `Shift`+click → ban. Every removal / clear / reset can be undone
   from the notification.
+- While picking enemies the grid stays neutral; in "your team" mode it shows each hero's advantage. The mode switches
+  to your team once 5 enemies are picked, and holding `Alt` turns it on temporarily.
 - Shareable draft links: `#e=pudge,antimage&a=axe.3,lion.5&b=invoker` (`hero.position` for manually set positions).
   Links of the original DotaBuffCP (`#Pudge/Axe`) still work.
 

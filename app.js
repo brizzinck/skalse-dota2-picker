@@ -784,7 +784,7 @@ function bind() {
   search.addEventListener('keydown', (ev) => {
     if (ev.key === 'Enter') {
       const first = searchMatches()[0];
-      if (state.query.trim() && first && add(first, ev.shiftKey ? 'ally' : ev.altKey ? 'ban' : state.mode)) {
+      if (state.query.trim() && first && add(first, ev.shiftKey || ev.altKey ? 'ally' : ev.ctrlKey || ev.metaKey ? 'ban' : state.mode)) {
         search.value = state.query = '';
         renderPool();
       }
@@ -796,6 +796,26 @@ function bind() {
       if (last) remove(last);
     }
   });
+
+  // holding Alt = temporary "your team" mode: the grid shows advantages and clicks add allies
+  let altPrevMode = null;
+  const altUp = () => {
+    if (altPrevMode === null) return;
+    const prev = altPrevMode;
+    altPrevMode = null;
+    setMode(prev);
+  };
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Alt' || ev.repeat || altPrevMode !== null || document.querySelector('dialog[open]')) return;
+    altPrevMode = state.mode;
+    if (state.mode !== 'ally') setMode('ally');
+  });
+  document.addEventListener('keyup', (ev) => {
+    if (ev.key !== 'Alt') return;
+    ev.preventDefault(); // don't let the browser focus its menu bar
+    altUp();
+  });
+  window.addEventListener('blur', altUp);
 
   // typing anywhere focuses the search; "?" opens help
   document.addEventListener('keydown', (ev) => {
