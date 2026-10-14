@@ -15,7 +15,7 @@ jobs:
   update:
     if: github.event_name != 'push'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
     permissions:
       contents: write
     steps:
@@ -62,6 +62,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.ref_name }}   # свежий коммит с новым data.js
+      - name: Cache-bust JS/CSS (браузеры сразу получают новую версию)
+        run: |
+          v=$(git rev-parse --short HEAD)
+          sed -i -E "s/(src|href)=\"([a-z0-9-]+\.(js|css))\"/\1=\"\2?v=$v\"/g" index.html
+          grep -oE '(src|href)="[a-z0-9-]+\.(js|css)\?v=[a-f0-9]+"' index.html
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

@@ -721,6 +721,18 @@ function bind() {
     setSource(b.dataset.source);
   });
 
+  $('#btn-reset').addEventListener('click', () => {
+    state.enemy = [null, null, null, null, null];
+    state.ally = [null, null, null, null, null];
+    state.enemyManual = [false, false, false, false, false];
+    state.allyManual = [false, false, false, false, false];
+    state.ban = [];
+    state.pickPos = 'auto';
+    search.value = state.query = '';
+    changed();
+    toast('Драфт очищен');
+  });
+
   $('#btn-share').addEventListener('click', async () => {
     try { await navigator.clipboard.writeText(location.href); toast('Ссылка скопирована'); }
     catch { toast(location.href); }

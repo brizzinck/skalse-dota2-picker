@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f6d27a"/>
+      <stop offset="1" stop-color="#c88a22"/>
+    </linearGradient>
+    <linearGradient id="blade" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#b9c3d6"/>
+    </linearGradient>
+    <symbol id="sword" viewBox="0 0 64 64">
+      <path d="M32 5 L36.5 11 L36.5 40 L27.5 40 L27.5 11 Z" fill="url(#blade)"/>
+      <path d="M32 9 L32 39" stroke="#8d97ab" stroke-width="1.2"/>
+      <rect x="30" y="44" width="4" height="9" rx="1.2" fill="#6b4a1d"/>
+      <circle cx="32" cy="56" r="3.2" fill="url(#gold)"/>
+    </symbol>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="#0f131c"/>
+  <rect x="2.5" y="2.5" width="59" height="59" rx="12" fill="none" stroke="url(#gold)" stroke-width="3"/>
+  <!-- красный меч (враги) -->
+  <g transform="rotate(-42 32 33)">
+    <use href="#sword" x="0" y="0" width="64" height="64"/>
+    <rect x="21" y="39.5" width="22" height="5" rx="2.5" fill="#e5534b"/>
+  </g>
+  <!-- зелёный меч (ваша команда) -->
+  <g transform="rotate(42 32 33)">
+    <use href="#sword" x="0" y="0" width="64" height="64"/>
+    <rect x="21" y="39.5" width="22" height="5" rx="2.5" fill="#3fb68b"/>
+  </g>
+</svg>

@@ -141,10 +141,38 @@ function enemyTeam() {
   return state.enemy.map((k, i) => (k ? { key: k, pos: state.enemyPos[i] } : null)).filter(Boolean);
 }
 
-function counterItemsFor(heroKey, pos, stats) {
+// Билд по гайдам Dotabuff (матчи топ-игроков) именно для этой позиции героя
+function guideFor(heroKey, pos) {
+  const g = state.dotabuff && state.dotabuff.guides && state.dotabuff.guides[heroKey];
+  const p = g && pos && g[pos];
+  if (!p || !p.n) return null;
+  const list = Object.entries(p.items)
+    .map(([name, [cnt, t]]) => ({ key: itemKeyByName(name), cnt, share: cnt / p.n, median: t / 60 }))
+    .filter((x) => x.key && builds.items[x.key]);
+  return { n: p.n, w: p.w, list };
+}
+
+// Уместен ли предмет на позиции. Правило ITEM_POS снимается, если топ-игроки
+// реально собирают этот предмет на этом герое на этой позиции (≥20% матчей).
+function itemFitsPos(key, pos, guide) {
+  const rule = window.DBCP_KB.ITEM_POS[key];
+  if (!rule || !pos || rule.includes(pos)) return true;
+  return !!(guide && guide.n >= 3 && guide.list.some((x) => x.key === key && x.share >= 0.2));
+}
+
+// Насколько герой «сам по себе» собирает предмет: доля матчей по гайдам позиции, иначе общая статистика
+function ownShare(key, stats, guide) {
+  if (guide && guide.n >= 3) {
+    const g = guide.list.find((x) => x.key === key);
+    return g ? g.share : 0;
+  }
+  const s = stats.find((x) => x.key === key);
+  return s ? (s.share == null ? 0.05 : s.share) : 0;
+}
+
+function counterItemsFor(heroKey, pos, stats, guide) {
   const { THREATS, COUNTER_ITEMS, ATTACK_ITEMS, THREAT_INFO } = window.DBCP_KB;
   const cls = pos && pos >= 4 ? 'support' : 'core';
-  const builds_ = new Map(stats.map((s) => [s.key, s]));
   const foes = pos ? LANE_FOES[pos] : [];
   const acc = new Map();
 
@@ -154,8 +182,8 @@ function counterItemsFor(heroKey, pos, stats) {
       for (const ci of COUNTER_ITEMS[threat] || []) {
         if (ci.for !== 'any' && ci.for !== cls) continue;
         if (ci.pos && pos && !ci.pos.includes(pos)) continue;
-        const own = builds_.get(ci.item);
-        if (ATTACK_ITEMS.has(ci.item) && !(own && (own.share == null || own.share >= 0.01))) continue;
+        if (!itemFitsPos(ci.item, pos, guide)) continue;
+        if (ATTACK_ITEMS.has(ci.item) && ownShare(ci.item, stats, guide) < 0.01) continue;
         let w = ci.p * (laneFoe ? 1.3 : 1);
         if (['physical', 'evasion', 'passive'].includes(threat) && e.pos && e.pos <= 2) w *= 1.3;
         const a = acc.get(ci.item) || { item: ci.item, score: 0, vs: new Map(), reasons: new Set(), threats: new Set() };
@@ -168,89 +196,149 @@ function counterItemsFor(heroKey, pos, stats) {
     }
   }
   return [...acc.values()]
+    .filter((a) => builds.items[a.item])
     .map((a) => {
-      const own = builds_.get(a.item);
-      if (own && (own.share == null || own.share >= 0.03)) a.score *= 1.4;
-      a.own = own || null;
+      const share = ownShare(a.item, stats, guide);
+      if (share >= 0.03) a.score *= 1.4;
+      a.own = stats.find((x) => x.key === a.item) || null;
       return a;
     })
-    .filter((a) => builds.items[a.item])
     .sort((a, b) => b.score - a.score);
 }
 
-async function buildFor(heroKey, pos) {
-  const { SKIP_ITEMS, SUPPORT_ITEMS, CORE_ITEMS } = window.DBCP_KB;
+// Шаг 1: данные по герою (без учёта того, что берут союзники)
+async function prepareBuild(heroKey, pos) {
   await loadItemConsts();
   const [stats, timings] = await Promise.all([heroItemStats(heroKey), loadTimings(heroKey)]);
-  const cls = pos && pos >= 4 ? 'support' : 'core';
+  const guide = guideFor(heroKey, pos);
+  return {
+    heroKey, pos,
+    cls: pos && pos >= 4 ? 'support' : 'core',
+    gpm: laneGpm(heroKey, pos || 1),
+    stats, timings, guide,
+    counters: counterItemsFor(heroKey, pos, stats, guide),
+  };
+}
+
+// Шаг 2: таймлайн. banned — командные предметы, которые отданы другому союзнику.
+function finalizeBuild(b, banned) {
+  const { SKIP_ITEMS, SUPPORT_ITEMS, CORE_ITEMS } = window.DBCP_KB;
   const items = builds.items;
+  const counters = b.counters.filter((c) => !banned.has(c.item));
+  const counterOf = new Map(counters.map((c) => [c.item, c]));
+  const statOf = new Map(b.stats.map((s) => [s.key, s]));
+  const valid = (k) => { const it = items[k]; return it && !it.neutral && it.cost && !SKIP_ITEMS.has(k); };
+  const fits = (k) => itemFitsPos(k, b.pos, b.guide) && !banned.has(k);
+  const classOk = (k) => {
+    const it = items[k];
+    if (b.cls === 'support') return !CORE_ITEMS.has(k) && (it.cost <= 5000 || ['ultimate_scepter', 'aghanims_shard', 'sheepstick', 'refresher', 'octarine_core', 'wind_waker'].includes(k));
+    return !(SUPPORT_ITEMS.has(k) && !BOOTS.has(k));
+  };
 
-  const ok = stats.filter((s) => {
-    const it = items[s.key];
-    if (!it || it.neutral || !it.cost || SKIP_ITEMS.has(s.key)) return false;
-    if (cls === 'support' && (CORE_ITEMS.has(s.key) || (it.cost > 5000 && !['ultimate_scepter', 'aghanims_shard', 'sheepstick', 'refresher', 'octarine_core', 'wind_waker'].includes(s.key)))) return false;
-    if (cls === 'core' && SUPPORT_ITEMS.has(s.key) && !BOOTS.has(s.key)) return false;
-    return true;
-  });
-  // компоненты, которые почти всегда собираются дальше, не показываем
+  // общая статистика героя, отфильтрованная под позицию
+  const ok = b.stats.filter((s) => valid(s.key) && fits(s.key) && classOk(s.key));
   const isComponent = (s) => ok.some((o) => o.key !== s.key && items[o.key].components.includes(s.key) && o.matches >= s.matches * 0.5);
-
   const early = ok
     .filter((s) => items[s.key].cost < 1100 && !BOOTS.has(s.key) && !isComponent(s) && (s.share == null || s.share >= 0.15))
-    .slice(0, 3);
-  const boots = ok.filter((s) => BOOTS.has(s.key) && s.key !== 'boots' && s.key !== 'travel_boots')[0];
-  const core = ok
-    .filter((s) => items[s.key].cost >= 1100 && !BOOTS.has(s.key) && !isComponent(s))
-    .slice(0, cls === 'core' ? 5 : 4);
+    .slice(0, 3)
+    .map((s) => ({ ...s, phase: 'early' }));
 
-  const counters = counterItemsFor(heroKey, pos, stats);
-  // в таймлайн добавляем только «настоящие» предметы; расходники (Dust, сентри) остаются в списке контр-предметов
-  const counterTop = counters
-    .filter((c) => !core.some((x) => x.key === c.item) && !SKIP_ITEMS.has(c.item) && items[c.item].cost >= 1000)
-    .slice(0, 2);
-  const counterSet = new Map(counters.map((c) => [c.item, c]));
-
-  // порядок: ранние → ботинки → остальное по реальному таймингу (OpenDota) или по цене
-  const timeOf = (k) => (timings.get(k) ? timings.get(k).median : null);
-  const order = (a, b) => {
-    const ta = timeOf(a.key), tb = timeOf(b.key);
-    if (ta != null && tb != null && ta !== tb) return ta - tb;
-    return items[a.key].cost - items[b.key].cost;
-  };
-  const main = [
-    ...core.map((s) => ({ ...s, counter: counterSet.get(s.key) || null })),
-    ...counterTop.map((c) => ({ key: c.item, matches: c.own ? c.own.matches : 0, wr: c.own ? c.own.wr : null, share: c.own ? c.own.share : null, counter: c, added: true })),
-  ].sort(order);
-  const timeline = [...early.map((s) => ({ ...s, phase: 'early' })), ...(boots ? [{ ...boots, phase: 'boots' }] : []), ...main.map((s) => ({ ...s, phase: 'main' }))];
-
-  // ETA: накопленная стоимость / GPM героя на этой позиции. Реальный тайминг OpenDota берём,
-  // только если он меньше 25 минут — дальше у OpenDota одна общая корзина «до 30 минут».
-  const gpm = laneGpm(heroKey, pos || 1);
-  let spent = 0, last = 0;
-  for (const s of timeline) {
-    spent += items[s.key].cost;
-    const est = (spent / gpm) + 1;
-    const t = timings.get(s.key);
-    s.real = !!(t && t.median < 25);
-    s.eta = Math.max(last, s.real ? Math.min(t.median, est * 1.25) : est);
-    s.timing = t || null;
-    last = s.eta;
+  let main, source;
+  if (b.guide && b.guide.n >= 3) {
+    // реальный билд топ-игроков на этой позиции: предметы из ≥25% матчей, по медианному времени покупки
+    source = 'guides';
+    main = b.guide.list
+      .filter((x) => valid(x.key) && fits(x.key) && x.share >= 0.25 && !early.some((e) => e.key === x.key))
+      .sort((x, y) => x.median - y.median)
+      .slice(0, b.cls === 'core' ? 7 : 6)
+      .map((x) => ({
+        key: x.key, share: x.share, fromGuides: true,
+        wr: statOf.get(x.key) ? statOf.get(x.key).wr : null,
+        eta: x.median, real: true, timing: b.timings.get(x.key) || null,
+        counter: counterOf.get(x.key) || null,
+      }));
+  } else {
+    // мало матчей на этой позиции — общий билд героя, отфильтрованный правилами позиции
+    source = 'stats';
+    const boots = ok.find((s) => BOOTS.has(s.key) && s.key !== 'boots' && s.key !== 'travel_boots');
+    const core = ok.filter((s) => items[s.key].cost >= 1100 && !BOOTS.has(s.key) && !isComponent(s)).slice(0, b.cls === 'core' ? 5 : 4);
+    const timeOf = (k) => (b.timings.get(k) ? b.timings.get(k).median : null);
+    main = [...(boots ? [boots] : []), ...core].sort((x, y) => {
+      if (BOOTS.has(x.key) !== BOOTS.has(y.key)) return BOOTS.has(x.key) ? -1 : 1;
+      const tx = timeOf(x.key), ty = timeOf(y.key);
+      if (tx != null && ty != null && tx !== ty) return tx - ty;
+      return items[x.key].cost - items[y.key].cost;
+    }).map((s) => ({ ...s, counter: counterOf.get(s.key) || null }));
+    // ETA: накопленная стоимость / GPM на позиции; тайминг OpenDota — если он меньше 25 минут
+    let spent = early.reduce((sum, s) => sum + items[s.key].cost, 0), last = 0;
+    for (const s of main) {
+      spent += items[s.key].cost;
+      const est = spent / b.gpm + 1;
+      const t = b.timings.get(s.key);
+      s.real = !!(t && t.median < 25);
+      s.eta = Math.max(last, s.real ? Math.min(t.median, est * 1.25) : est);
+      s.timing = t || null;
+      last = s.eta;
+    }
   }
 
-  // игры редко идут дольше ~55 минут — дальше это уже не план, а гадание
-  return { heroKey, pos, cls, gpm, timeline: timeline.filter((s) => s.eta <= 55), counters: counters.slice(0, 6) };
+  // два лучших контр-предмета, которых ещё нет в билде, — «после первого корового предмета»
+  const first = main.find((m) => items[m.key].cost >= 1100 && !BOOTS.has(m.key));
+  const base = first ? first.eta : 10;
+  const extra = counters
+    .filter((c) => !main.some((m) => m.key === c.item) && !SKIP_ITEMS.has(c.item) && items[c.item].cost >= 1000)
+    .slice(0, 2)
+    .map((c) => {
+      const t = b.timings.get(c.item);
+      const s = statOf.get(c.item);
+      return {
+        key: c.item, counter: c, added: true, wr: s ? s.wr : null, share: s ? s.share : null,
+        real: !!(t && t.median < 25), eta: t && t.median < 25 ? t.median : base + items[c.item].cost / b.gpm, timing: t || null,
+      };
+    });
+  main = [...main, ...extra].sort((x, y) => x.eta - y.eta).map((s) => ({ ...s, phase: 'main' }));
+
+  // ETA ранних предметов — по накопленной стоимости
+  let spent = 0;
+  for (const s of early) { spent += items[s.key].cost; s.eta = spent / b.gpm + 1; s.real = false; }
+
+  return {
+    heroKey: b.heroKey, pos: b.pos, cls: b.cls, gpm: b.gpm, source, guide: b.guide,
+    timeline: [...early, ...main].filter((s) => s.eta <= 60),
+    counters: counters.slice(0, 6),
+  };
+}
+
+// Командные предметы (Vessel, Pipe, Mekansm…) — одному-двум союзникам, кому подходят лучше
+function allocateTeamItems(list) {
+  const { TEAM_ITEMS } = window.DBCP_KB;
+  const banned = new Map(list.map((b) => [b, new Set()]));
+  const owner = new Map();
+  for (const [item, rule] of Object.entries(TEAM_ITEMS)) {
+    const cands = list.filter((b) => b.counters.some((c) => c.item === item) || ownShare(item, b.stats, b.guide) >= 0.25);
+    if (!cands.length) continue;
+    // кто собирает предмет как часть основного билда (≥50% матчей) — у того он и остаётся
+    const core = (b) => (b.guide && b.guide.n >= 3 && ownShare(item, b.stats, b.guide) >= 0.5 ? 0 : 1);
+    const rank = (b) => { const i = rule.pref.indexOf(b.pos); return i === -1 ? 99 : i; };
+    const sc = (b) => (b.counters.find((c) => c.item === item) || { score: 0 }).score + ownShare(item, b.stats, b.guide) * 10;
+    cands.sort((x, y) => core(x) - core(y) || rank(x) - rank(y) || sc(y) - sc(x));
+    const keep = Math.max(rule.max, cands.filter((b) => core(b) === 0).length);
+    owner.set(item, cands.slice(0, keep).map((b) => b.heroKey));
+    cands.slice(keep).forEach((b) => banned.get(b).add(item));
+  }
+  return { banned, owner };
 }
 
 /* ---------- рендер ---------- */
 
 const mmss = (m) => `${Math.round(m)}'`;
 
-function itemChip(s, opts = {}) {
+function itemChip(s) {
   const it = builds.items[s.key];
   const t = s.timing;
   const tip = [
     it.name + ` — ${it.cost} золота`,
-    s.share != null ? `собирают в ${(s.share * 100).toFixed(0)}% игр` : '',
+    s.share != null ? (s.fromGuides ? `в ${(s.share * 100).toFixed(0)}% матчей топ-игроков на этой позиции, медиана ${mmss(s.eta)}` : `собирают в ${(s.share * 100).toFixed(0)}% игр героя`) : '',
     s.wr != null ? `винрейт с предметом ${s.wr.toFixed(1)}%` : '',
     t && t.early != null && t.late != null ? `успел до ${mmss(t.median)}: WR ${t.early.toFixed(0)}% · позже: ${t.late.toFixed(0)}%` : '',
     s.counter ? 'против: ' + [...s.counter.vs.keys()].map((k) => hero(k).name).join(', ') + ' — ' + [...s.counter.reasons][0] : '',
@@ -258,20 +346,25 @@ function itemChip(s, opts = {}) {
   const cls = ['item', s.counter ? 'is-counter' : '', s.added ? 'is-added' : ''].join(' ');
   return `<div class="${cls}" title="${esc(tip)}">
     <img src="${it.img}" alt="" loading="lazy">
-    ${opts.time === false ? '' : `<span class="item-t">${s.real ? '' : '≈'}${mmss(s.eta)}</span>`}
+    <span class="item-t">${s.real ? '' : '≈'}${mmss(s.eta)}</span>
     ${s.counter ? '<span class="item-flag" aria-hidden="true">⚑</span>' : ''}
   </div>`;
 }
 
-function buildCard(b) {
+function buildCard(b, owner) {
   const h = hero(b.heroKey);
+  const tl = b.timeline;
   const phases = [
-    { name: 'Линия', list: b.timeline.filter((s) => s.phase === 'early' || s.phase === 'boots') },
-    { name: 'До 20 минут', list: b.timeline.filter((s) => s.phase === 'main' && s.eta < 20) },
-    { name: '20–30 минут', list: b.timeline.filter((s) => s.phase === 'main' && s.eta >= 20 && s.eta < 30) },
-    { name: '30–40 минут', list: b.timeline.filter((s) => s.phase === 'main' && s.eta >= 30 && s.eta < 40) },
-    { name: 'Лейт', list: b.timeline.filter((s) => s.phase === 'main' && s.eta >= 40) },
+    { name: 'Линия', list: tl.filter((s) => s.phase === 'early' || s.eta < 10) },
+    { name: 'До 20 минут', list: tl.filter((s) => s.phase === 'main' && s.eta >= 10 && s.eta < 20) },
+    { name: '20–30 минут', list: tl.filter((s) => s.phase === 'main' && s.eta >= 20 && s.eta < 30) },
+    { name: '30–40 минут', list: tl.filter((s) => s.phase === 'main' && s.eta >= 30 && s.eta < 40) },
+    { name: 'Лейт', list: tl.filter((s) => s.phase === 'main' && s.eta >= 40) },
   ].filter((p) => p.list.length);
+
+  const src = b.source === 'guides'
+    ? `Билд по ${b.guide.n} свежим матчам топ-игроков (~5000+ MMR) на позиции ${b.pos}`
+    : (b.pos ? `Мало матчей топ-игроков на позиции ${b.pos} — общий билд героя, отфильтрованный под позицию` : 'Задайте позицию — билд станет точнее');
 
   const lane = b.pos ? enemyTeam().filter((e) => e.pos && LANE_FOES[b.pos].includes(e.pos)) : [];
   const laneHtml = lane.length ? `<div class="build-lane">На линии против: ${lane.map((e) => {
@@ -283,10 +376,11 @@ function buildCard(b) {
 
   const counters = b.counters.map((c) => {
     const it = builds.items[c.item];
+    const team = owner.has(c.item) ? ' <small class="team-tag">на команду</small>' : '';
     return `<div class="counter-row">
       <img class="counter-img" src="${it.img}" alt="">
       <div class="counter-main">
-        <div><b>${esc(it.name)}</b>${c.own && c.own.wr != null ? ` <small class="muted">WR ${c.own.wr.toFixed(1)}%</small>` : ''}</div>
+        <div><b>${esc(it.name)}</b>${team}${c.own && c.own.wr != null ? ` <small class="muted">WR ${c.own.wr.toFixed(1)}%</small>` : ''}</div>
         <div class="muted">${esc([...c.reasons].slice(0, 2).join('; '))}</div>
       </div>
       <div class="counter-vs">${[...c.vs.keys()].map((k) => `<img src="${hero(k).icon || hero(k).img}" title="${esc(hero(k).name)}" alt="">`).join('')}</div>
@@ -301,9 +395,10 @@ function buildCard(b) {
         <div class="muted">${b.pos ? `Позиция ${b.pos} · ${POS_NAMES[b.pos]}` : 'Позиция не задана'} · ~${Math.round(b.gpm)} GPM</div>
       </div>
     </header>
+    <div class="build-src ${b.source === 'guides' ? '' : 'warn'}">${esc(src)}</div>
     ${laneHtml}
     <div class="build-timeline">
-      ${phases.map((p) => `<div class="phase"><div class="phase-name">${p.name}</div><div class="phase-items">${p.list.map((s) => itemChip(s)).join('')}</div></div>`).join('')}
+      ${phases.map((p) => `<div class="phase"><div class="phase-name">${p.name}</div><div class="phase-items">${p.list.map(itemChip).join('')}</div></div>`).join('')}
     </div>
     ${counters ? `<div class="build-sub">Против этой команды</div><div class="counters">${counters}</div>` :
       (enemyTeam().length ? '' : '<div class="muted build-sub">Добавьте врагов — появятся контр-предметы.</div>')}
@@ -321,11 +416,13 @@ async function renderBuilds() {
   const body = $('#builds-body');
   if (!body.children.length) body.innerHTML = '<div class="empty-state"><p>Считаю билды…</p></div>';
   try {
-    const list = await Promise.all(allies.map((a) => buildFor(a.key, a.pos)));
+    const prepared = await Promise.all(allies.map((a) => prepareBuild(a.key, a.pos)));
     if (token !== buildsToken) return;
-    body.innerHTML = list.map(buildCard).join('');
+    const { banned, owner } = allocateTeamItems(prepared);
+    body.innerHTML = prepared.map((b) => buildCard(finalizeBuild(b, banned.get(b)), owner)).join('');
   } catch (e) {
     if (token !== buildsToken) return;
+    console.error(e);
     body.innerHTML = `<div class="empty-state"><p>Не удалось загрузить предметы: ${esc(e.message)}</p></div>`;
   }
 }

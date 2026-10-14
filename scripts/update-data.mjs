@@ -33,7 +33,7 @@ async function attempt(headless) {
     const expression =
       `window.DBCP_NO_AUTORUN = true;\n${scraper}\n;` +
       `dbcpScrape({ download: false, date: ${JSON.stringify(date)} }).then((d) => JSON.stringify(d))`;
-    const res = await cdp.send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true, timeout: 600_000 });
+    const res = await cdp.send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true, timeout: 2_400_000 });
     if (res.exceptionDetails) throw new Error(res.exceptionDetails.exception?.description || res.exceptionDetails.text);
     return res.result.value;
   } finally {

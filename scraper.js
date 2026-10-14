@@ -213,9 +213,81 @@ async function dbcpScrape(opts) {
     status(`предметы ${++done}/${total} (${heroes[slug].name})`);
   });
 
+  // ---------- гайды: свежие матчи топ-игроков с линией, ролью и таймингами предметов ----------
+  // линия + роль → позиция: safe core 1, mid 2, off core 3, off support 4, safe support 5, roaming 4
+  const guidePos = (lane, role) => {
+    if (/mid/.test(lane)) return role === 'support' ? 4 : 2;
+    if (/safe/.test(lane)) return role === 'support' ? 5 : 1;
+    if (/off/.test(lane)) return role === 'support' ? 4 : 3;
+    if (/roam/.test(lane)) return 4;
+    if (/jungle/.test(lane)) return role === 'support' ? 4 : 3;
+    return null;
+  };
+  const toSec = (t) => {
+    const p = String(t).trim().split(':').map(Number);
+    if (p.some((x) => !Number.isFinite(x))) return null;
+    return p.length === 3 ? p[0] * 3600 + p[1] * 60 + p[2] : p[0] * 60 + p[1];
+  };
+  function parseGuides(doc) {
+    const blocks = [];
+    for (const icon of doc.querySelectorAll('i[class*="fa-lane-"]')) {
+      let el = icon;
+      while (el && !(el.querySelector && el.querySelector('.match-item-with-time') && /View Match/i.test(el.textContent))) el = el.parentElement;
+      if (el && !blocks.includes(el)) blocks.push(el);
+    }
+    return blocks.map((b) => {
+      const lane = (b.querySelector('i[class*="fa-lane-"]').className.match(/fa-lane-(\w+)/) || [])[1] || '';
+      const roleIcon = b.querySelector('i[class*="fa-role-"]');
+      const role = roleIcon ? (roleIcon.className.match(/fa-role-(\w+)/) || [])[1] : 'core';
+      const won = /\bwon\b/i.test((b.querySelector('small') || b).textContent);
+      const items = [...b.querySelectorAll('.match-item-with-time')]
+        .map((m) => ({ name: (m.querySelector('img') || {}).alt || '', t: toSec((m.querySelector('.time') || {}).textContent || '') }))
+        .filter((x) => x.name && x.t != null);
+      return { pos: guidePos(lane, role), won, items };
+    }).filter((g) => g.pos && g.items.length);
+  }
+
+  const guides = {};
+  done = 0;
+  await pool(Object.keys(heroes), async (slug) => {
+    const list = [];
+    for (let page = 1; page <= (opts.guidePages || 4); page++) {
+      try {
+        const doc = await get(`/heroes/${slug}/guides${page > 1 ? '?page=' + page : ''}`);
+        const g = doc ? parseGuides(doc) : [];
+        list.push(...g);
+        if (g.length < 3) break;
+      } catch (e) {
+        console.warn('[DotaBuffCP] guides', slug, page, e);
+        break;
+      }
+    }
+    // по позициям: сколько матчей, побед и для каждого предмета — в скольких матчах и медианная минута
+    const byPos = {};
+    for (const g of list) {
+      const p = (byPos[g.pos] = byPos[g.pos] || { n: 0, w: 0, items: {} });
+      p.n++; if (g.won) p.w++;
+      const seen = new Set();
+      for (const it of g.items) {
+        if (seen.has(it.name)) continue;
+        seen.add(it.name);
+        (p.items[it.name] = p.items[it.name] || []).push(it.t);
+      }
+    }
+    for (const p of Object.values(byPos)) {
+      for (const [name, times] of Object.entries(p.items)) {
+        times.sort((a, b) => a - b);
+        p.items[name] = [times.length, times[times.length >> 1]];
+      }
+    }
+    guides[norm(heroes[slug].name)] = byPos;
+    if (!list.length) failed.push('guides:' + slug);
+    status(`гайды ${++done}/${total} (${heroes[slug].name})`);
+  });
+
   const out = {
     source: 'dotabuff',
-    version: 2,
+    version: 3,
     updated: new Date().toISOString().slice(0, 10),
     updatedAt: new Date().toISOString(),
     period,
@@ -225,6 +297,7 @@ async function dbcpScrape(opts) {
     m: {},
     lanes,
     items,
+    guides,
   };
   for (const slug in heroes) {
     const k = norm(heroes[slug].name);

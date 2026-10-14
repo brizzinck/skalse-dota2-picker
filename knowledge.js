@@ -187,7 +187,7 @@ const COUNTER_ITEMS = {
     { item: 'mage_slayer', for: 'core', p: 1, why: 'режет магический урон врага' },
   ],
   heal: [
-    { item: 'spirit_vessel', for: 'any', p: 3, why: 'режет хил и реген' },
+    { item: 'spirit_vessel', for: 'any', p: 2, why: 'режет хил и реген' },
     { item: 'shivas_guard', for: 'core', p: 2, why: 'аура режет лечение' },
     { item: 'skadi', for: 'core', p: 2, why: 'атаки режут хил' },
     { item: 'urn_of_shadows', for: 'support', p: 1, why: 'ранний -хил, потом Vessel' },
@@ -278,10 +278,54 @@ const STARTING_ITEMS = new Set([
   'wind_lace', 'ward_observer', 'ward_sentry', 'stout_shield', 'crown', 'boots',
 ]);
 
+// На каких позициях предмет вообще уместен. Правило снимается, если по гайдам Dotabuff
+// топ-игроки реально собирают этот предмет на этом герое на этой позиции (≥20% матчей).
+const ITEM_POS = {
+  bottle: [2],
+  hand_of_midas: [1, 2],
+  spirit_vessel: [3, 4, 5], urn_of_shadows: [4, 5],
+  pipe: [3], crimson_guard: [3], heavens_halberd: [3],
+  vladmir: [3, 4, 5], mekansm: [3, 4, 5], guardian_greaves: [3, 4, 5], lotus_orb: [3, 4, 5],
+  glimmer_cape: [4, 5], force_staff: [3, 4, 5], ghost: [4, 5], solar_crest: [4, 5], pavise: [4, 5],
+  holy_locket: [4, 5], boots_of_bearing: [4, 5], tranquil_boots: [4, 5], arcane_boots: [3, 4, 5],
+  ward_observer: [4, 5], ward_sentry: [4, 5], ward_dispenser: [4, 5], gem: [4, 5], smoke_of_deceit: [4, 5],
+  blood_grenade: [4, 5], wind_waker: [2, 4, 5], aether_lens: [2, 4, 5], rod_of_atos: [2, 3, 4, 5],
+  medallion_of_courage: [4, 5], cyclone: [2, 4, 5],
+  bfury: [1, 3], radiance: [1, 3], maelstrom: [1, 2, 3], mjollnir: [1, 2, 3], butterfly: [1, 2],
+  satanic: [1, 2, 3], skadi: [1, 2, 3], greater_crit: [1, 2], monkey_king_bar: [1, 2, 3], abyssal_blade: [1, 3],
+  disperser: [1, 2], desolator: [1, 2, 3], diffusal_blade: [1, 2, 3], bloodthorn: [1, 2], silver_edge: [1, 2, 3],
+  manta: [1, 2, 3], black_king_bar: [1, 2, 3], assault: [1, 3], shivas_guard: [2, 3], heart: [1, 3],
+  nullifier: [1, 2, 3], orchid: [1, 2, 3], aeon_disk: [1, 2, 3], sphere: [1, 2, 3], power_treads: [1, 2, 3],
+  phase_boots: [1, 2, 3], mask_of_madness: [1, 2], echo_sabre: [1, 2, 3], harpoon: [1, 2, 3],
+  sheepstick: [2, 3, 4, 5], blade_mail: [2, 3], javelin: [1, 2], mage_slayer: [1, 2, 3], gungir: [1, 2, 3],
+};
+
+// Командные предметы: на всю команду нужен один (или два) — советуем тому, кому подходит лучше.
+// pref — позиции в порядке предпочтения.
+const TEAM_ITEMS = {
+  spirit_vessel: { max: 1, pref: [4, 3, 5] },
+  urn_of_shadows: { max: 1, pref: [4, 5] },
+  pipe: { max: 1, pref: [3] },
+  crimson_guard: { max: 1, pref: [3] },
+  heavens_halberd: { max: 1, pref: [3] },
+  mekansm: { max: 1, pref: [5, 4, 3] },
+  guardian_greaves: { max: 1, pref: [5, 4, 3] },
+  lotus_orb: { max: 1, pref: [4, 3, 5] },
+  gem: { max: 1, pref: [5, 4] },
+  dust: { max: 2, pref: [4, 5, 2, 1, 3] },
+  ward_sentry: { max: 2, pref: [5, 4] },
+  solar_crest: { max: 1, pref: [4, 5] },
+  assault: { max: 1, pref: [3, 1] },
+  shivas_guard: { max: 1, pref: [3, 2] },
+  vladmir: { max: 1, pref: [4, 3, 5] },
+};
+
 // Предметы «под атаку»: советуем их как контр-предмет только героям, которые реально их собирают
 const ATTACK_ITEMS = new Set([
   'monkey_king_bar', 'bloodthorn', 'javelin', 'silver_edge', 'diffusal_blade', 'desolator', 'bfury', 'mjollnir',
   'maelstrom', 'skadi', 'abyssal_blade', 'nullifier', 'orchid', 'radiance', 'gungir', 'mage_slayer', 'assault',
 ]);
 
-window.DBCP_KB = { THREAT_INFO, THREATS, COUNTER_ITEMS, SUPPORT_ITEMS, CORE_ITEMS, SKIP_ITEMS, STARTING_ITEMS, ATTACK_ITEMS };
+window.DBCP_KB = {
+  THREAT_INFO, THREATS, COUNTER_ITEMS, SUPPORT_ITEMS, CORE_ITEMS, SKIP_ITEMS, STARTING_ITEMS, ATTACK_ITEMS, ITEM_POS, TEAM_ITEMS,
+};

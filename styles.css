@@ -71,13 +71,10 @@ code { font-size: 12px; padding: 1px 5px; border-radius: 4px; background: var(--
 }
 .brand { display: flex; align-items: center; gap: 12px; }
 .brand-mark {
-  display: grid; place-items: center;
-  width: 38px; height: 38px;
+  width: 40px; height: 40px;
   border-radius: 10px;
-  font: 700 16px/1 Rajdhani, sans-serif;
-  color: #1a1206;
-  background: linear-gradient(135deg, #f4cf74, #c98a24);
-  box-shadow: 0 4px 16px rgba(226, 176, 74, .35);
+  display: block;
+  box-shadow: 0 4px 16px rgba(226, 176, 74, .3);
 }
 .brand-title { font: 700 20px/1 Rajdhani, sans-serif; letter-spacing: .5px; }
 .brand-sub { color: var(--muted); font-size: 12px; margin-top: 3px; }
@@ -104,6 +101,17 @@ code { font-size: 12px; padding: 1px 5px; border-radius: 4px; background: var(--
   cursor: pointer;
 }
 .link:hover { color: var(--text); text-decoration: underline; }
+.clear-btn {
+  font: 600 11px/1 Inter, system-ui, sans-serif;
+  color: var(--muted);
+  background: var(--bg-2);
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  padding: 5px 8px;
+  cursor: pointer;
+}
+.clear-btn:hover { color: var(--text); border-color: var(--muted); }
+.clear-btn:active { transform: translateY(1px); }
 
 .seg {
   display: inline-flex;
@@ -379,6 +387,12 @@ code { font-size: 12px; padding: 1px 5px; border-radius: 4px; background: var(--
 .build-hero { width: 96px; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 8px; }
 .build-name { font: 700 18px/1.2 Rajdhani, sans-serif; }
 .build-lane { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; color: var(--muted); font-size: 12px; }
+.build-src { font-size: 12px; color: var(--good); }
+.build-src.warn { color: var(--accent); }
+.team-tag {
+  font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px;
+  color: var(--accent); border: 1px solid rgba(226, 176, 74, .45); border-radius: 4px; padding: 1px 4px;
+}
 .build-sub { font: 700 13px/1 Rajdhani, sans-serif; letter-spacing: .6px; text-transform: uppercase; color: var(--muted); }
 
 .build-timeline { display: flex; flex-direction: column; gap: 10px; }

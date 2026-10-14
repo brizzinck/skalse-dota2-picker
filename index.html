@@ -8,12 +8,16 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Rajdhani:wght@600;700&display=swap" rel="stylesheet">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="favicon-32.png" sizes="32x32" type="image/png">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <meta name="theme-color" content="#0b0e14">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <header class="topbar">
     <div class="brand">
-      <span class="brand-mark">CP</span>
+      <img class="brand-mark" src="favicon.svg" alt="">
       <div>
         <div class="brand-title">Counter Picker</div>
         <div class="brand-sub" id="data-info">загрузка…</div>
@@ -24,6 +28,7 @@
         <button data-source="dotabuff">Dotabuff</button>
         <button data-source="opendota">OpenDota live</button>
       </div>
+      <button class="btn ghost" id="btn-reset" title="Очистить врагов, свою команду и баны">Сбросить всё</button>
       <button class="btn ghost" id="btn-share" title="Скопировать ссылку на текущий драфт">Поделиться</button>
     </div>
   </header>
@@ -35,7 +40,7 @@
         <div class="team-head">
           <span class="team-label">Враги</span>
           <span class="team-hint">ЛКМ по герою</span>
-          <button class="link" data-clear="enemy">очистить</button>
+          <button class="clear-btn" data-clear="enemy">✕ очистить</button>
         </div>
         <div class="slots" id="slots-enemy"></div>
       </div>
@@ -43,7 +48,7 @@
         <div class="team-head">
           <span class="team-label">Ваша команда</span>
           <span class="team-hint">ПКМ по герою</span>
-          <button class="link" data-clear="ally">очистить</button>
+          <button class="clear-btn" data-clear="ally">✕ очистить</button>
         </div>
         <div class="slots" id="slots-ally"></div>
       </div>
@@ -51,7 +56,7 @@
         <div class="team-head">
           <span class="team-label">Баны</span>
           <span class="team-hint">Shift + клик</span>
-          <button class="link" data-clear="ban">очистить</button>
+          <button class="clear-btn" data-clear="ban">✕ очистить</button>
         </div>
         <div class="bans" id="slots-ban"></div>
       </div>
@@ -92,8 +97,10 @@
   <section class="builds-section" id="builds" hidden>
     <div class="builds-title">
       <h2>Билды вашей команды</h2>
-      <p class="muted">Что собирать и к какой минуте — популярные предметы героя в текущем патче (Dotabuff) и реальные тайминги покупки (OpenDota).
-        <span class="legend"><span class="item-flag">⚑</span> — предмет против вражеского пика, <b>≈</b> — расчётное время по GPM. Наведите на предмет — подробности.</span></p>
+      <p class="muted">Что собирать и к какой минуте — по свежим матчам топ-игроков именно на этой позиции (Dotabuff Guides), время — медианное время покупки.
+        Если матчей на позиции мало — общий билд героя в текущем патче, отфильтрованный под позицию.
+        <span class="legend"><span class="item-flag">⚑</span> — предмет против вражеского пика, <b>≈</b> — расчётное время по GPM,
+        <span class="team-tag">на команду</span> — нужен одному человеку в команде. Наведите на предмет — подробности.</span></p>
     </div>
     <div class="builds-grid" id="builds-body"></div>
   </section>
