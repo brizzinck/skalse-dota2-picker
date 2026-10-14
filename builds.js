@@ -57,6 +57,8 @@ async function loadItemConsts() {
 }
 
 const itemKeyByName = (name) => builds.byName.get(norm(String(name).replace(/\s*\(level \d+\)/i, '')));
+// Stratz data stores internal item keys, Dotabuff data stores display names
+const resolveItem = (x) => (builds.items[x] ? x : itemKeyByName(x));
 
 /* ---------- purchase timings (OpenDota, cached for a day) ---------- */
 
@@ -97,11 +99,11 @@ async function loadTimings(heroKey) {
 /* ---------- hero item statistics ---------- */
 
 async function heroItemStats(heroKey) {
-  const d = state.dotabuff;
+  const d = metaData();
   const games = d && d.games && d.games[heroKey];
   if (d && d.items && d.items[heroKey]) {
     return d.items[heroKey]
-      .map(([name, matches, wr]) => ({ key: itemKeyByName(name), matches, wr, share: games ? matches / games : null }))
+      .map(([name, matches, wr]) => ({ key: resolveItem(name), matches, wr, share: games ? matches / games : null }))
       .filter((x) => x.key);
   }
   // fallback: OpenDota itemPopularity (high-level matches only)
@@ -145,11 +147,12 @@ function enemyTeam() {
 
 // Dotabuff Guides (top-player matches) for this hero on this exact position
 function guideFor(heroKey, pos) {
-  const g = state.dotabuff && state.dotabuff.guides && state.dotabuff.guides[heroKey];
+  const d = metaData();
+  const g = d && d.guides && d.guides[heroKey];
   const p = g && pos && g[pos];
   if (!p || !p.n) return null;
   const list = Object.entries(p.items)
-    .map(([name, [cnt, sec]]) => ({ key: itemKeyByName(name), cnt, share: cnt / p.n, median: sec / 60 }))
+    .map(([name, [cnt, sec]]) => ({ key: resolveItem(name), cnt, share: cnt / p.n, median: sec / 60 }))
     .filter((x) => x.key && builds.items[x.key]);
   return { n: p.n, w: p.w, list };
 }
@@ -257,8 +260,11 @@ function finalizeBuild(b, banned) {
     // enough top-player matches on the position: items (≥25% of matches) and order come from them,
     // popularity and win rate — from the whole patch
     source = 'guides';
+    // a component that is usually completed into a bigger item from the list (Urn → Vessel, Yasha → Manta) is hidden
+    const guideComponent = (x) => b.guide.list.some((o) => o.key !== x.key && items[o.key].components.includes(x.key) && o.cnt >= x.cnt * 0.5);
     main = b.guide.list
-      .filter((x) => valid(x.key) && fits(x.key) && x.share >= 0.25 && !early.some((e) => e.key === x.key))
+      .filter((x) => valid(x.key) && fits(x.key) && x.share >= 0.25 && !early.some((e) => e.key === x.key)
+        && (items[x.key].cost >= 1000 || BOOTS.has(x.key)) && !guideComponent(x))
       .sort((x, y) => x.median - y.median)
       .slice(0, b.cls === 'core' ? 7 : 6)
       .map((x) => {
@@ -382,13 +388,14 @@ function itemChip(s) {
 }
 
 function sourceNote(b) {
-  const d = state.dotabuff;
+  const d = metaData();
   const games = d && d.games && d.games[b.heroKey];
   const patch = d ? periodName(d) : '';
   const gamesTxt = games
     ? (games >= 1e6 ? t('games.m', { n: (games / 1e6).toFixed(1) }) : t('games.k', { n: Math.round(games / 1000) }))
     : t('games.all');
   const n = b.guide ? b.guide.n : 0;
+  if (b.source === 'guides' && d && d.source === 'stratz') return t('build.src.stratz', { patch, p: b.pos, n: n.toLocaleString(LANG) });
   if (b.source === 'guides') return t('build.src.guides', { games: gamesTxt, patch, p: b.pos, n });
   let s = t('build.src.stats', { games: gamesTxt, patch, p: b.pos || '?' });
   if (!b.pos) return s + t('build.src.nopos');

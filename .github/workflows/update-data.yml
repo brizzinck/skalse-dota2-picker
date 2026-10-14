@@ -25,6 +25,15 @@ jobs:
         with:
           node-version: 22
 
+      # Stratz: plain API requests, no browser — the main source of fresh data
+      - name: Collect Stratz
+        env:
+          STRATZ_TOKEN: ${{ secrets.STRATZ || vars.STRATZ }}
+        if: env.STRATZ_TOKEN != ''
+        continue-on-error: true
+        run: node scripts/stratz.mjs
+
+      # Dotabuff: needs a real browser and may be blocked by Cloudflare on datacenter IPs
       - name: Install Patchright / Playwright (use the runner's Google Chrome)
         env:
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
@@ -33,13 +42,14 @@ jobs:
           sudo apt-get install -y xvfb >/dev/null
 
       - name: Scrape Dotabuff
+        continue-on-error: true
         run: xvfb-run -a node scripts/update-data.mjs
 
-      - name: Commit data.js
+      - name: Commit data
         run: |
           git config user.name 'lavrishkovlad'
           git config user.email 'lavrishkovlad@gmail.com'
-          git add data.js
+          git add data.js stratz.js 2>/dev/null || true
           if git diff --cached --quiet; then
             echo 'Data unchanged'
           else

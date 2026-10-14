@@ -102,6 +102,7 @@ const state = {
   heroes: [],        // [{key, id, name, attr, roles, img, icon, wr}]
   byKey: new Map(),
   dotabuff: null,    // window.DBCP_DATA or an imported file
+  stratz: null,      // window.DBCP_STRATZ (per-position statistics, see scripts/stratz.mjs)
   source: 'opendota',
   enemy: [null, null, null, null, null],
   ally: [null, null, null, null, null],
@@ -110,6 +111,7 @@ const state = {
   enemyManual: [false, false, false, false, false], // position set by the user
   allyManual: [false, false, false, false, false],
   pickPos: 0,        // position we pick for: 0 (any — pure counter-pick) | 1–5
+  sort: 'score',     // with a position: 'score' (counter-pick + meta) | 'share' (% of the hero's games on it)
   ban: [],
   mode: 'enemy',
   tab: 'best',
@@ -140,14 +142,23 @@ async function loadHeroMeta() {
   }));
 }
 
-// data.js is loaded by us, bypassing the cache — every visit gets the latest data from the server
-function loadDataScript() {
+// data files are loaded by us, bypassing the cache — every visit gets the latest data from the server
+function loadDataScript(file) {
   return new Promise((resolve) => {
     const s = document.createElement('script');
-    s.src = location.protocol.startsWith('http') ? 'data.js?v=' + Date.now() : 'data.js';
+    s.src = location.protocol.startsWith('http') ? file + '?v=' + Date.now() : file;
     s.onload = s.onerror = () => resolve();
     document.head.appendChild(s);
   });
+}
+
+// the dataset of the selected source; OpenDota live has matchups only
+function curData() {
+  return state.source === 'stratz' ? state.stratz : state.source === 'dotabuff' ? state.dotabuff : null;
+}
+// positions, meta and items: the selected source, otherwise the best available (Stratz > Dotabuff)
+function metaData() {
+  return curData() || state.stratz || state.dotabuff;
 }
 
 const stamp = (d) => d.updatedAt || d.updated || '';
@@ -201,6 +212,7 @@ async function odMatchupsFor(enemyKey) {
 }
 
 async function matchupsFor(enemyKey) {
+  if (state.source === 'stratz' && state.stratz) return state.stratz.m[enemyKey] || {};
   if (state.source === 'dotabuff' && state.dotabuff) return state.dotabuff.m[enemyKey] || {};
   return odMatchupsFor(enemyKey);
 }
@@ -212,7 +224,7 @@ async function calculate() {
   if (!enemies.length) { state.results = null; renderAll(); return; }
 
   // network fetch ahead (OpenDota) — show placeholders meanwhile
-  if (state.source !== 'dotabuff' && enemies.some((k) => !state.odMatchups.has(k))) renderPicksSkeleton();
+  if (state.source === 'opendota' && enemies.some((k) => !state.odMatchups.has(k))) renderPicksSkeleton();
 
   let tables;
   try {
@@ -250,13 +262,18 @@ function renderAll() {
 const MIN_POS_SHARE = 0.1;  // a hero "plays" a position if ≥10% of their games are there
 const LANE_WEIGHT = 1.5;    // your lane opponent weighs more
 
-// Hero game share per position: Dotabuff lanes + GPM (on one lane a core farms much more than a support)
+// Hero game share per position: Stratz positions directly, or Dotabuff lanes + GPM
+// (on one lane a core farms much more than a support)
 const shareCache = new Map();
 function posShares(key) {
   if (shareCache.has(key)) return shareCache.get(key);
   const s = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
-  const lanes = state.dotabuff && state.dotabuff.lanes && state.dotabuff.lanes[key];
-  if (lanes) {
+  const d = metaData();
+  const posStats = d && d.pos && d.pos[key];
+  const lanes = d && d.lanes && d.lanes[key];
+  if (posStats) {
+    for (const [p, [n]] of Object.entries(posStats)) s[p] = n;
+  } else if (lanes) {
     for (const [lane, [presence, , gpm]] of Object.entries(lanes)) {
       if (lane === 'safe') s[gpm >= 430 ? 1 : 5] += presence;
       else if (lane === 'mid') s[2] += presence;
@@ -312,19 +329,28 @@ function setPosition(side, i, p) {
 
 const targetPos = () => state.pickPos || null;
 
-// Position meta: the hero's win rate on that position's lane in the current patch (Dotabuff)
+// Position meta: the hero's win rate on that position in the current patch
+// (Stratz: exactly on the position; Dotabuff: on the position's lane)
 const META_WEIGHT = 0.5; // counter-picks matter more: meta adds ±2–3% at most, counters vs five heroes up to ±10%
 function posMeta(key, P) {
   if (!P) return null;
-  const lanes = state.dotabuff && state.dotabuff.lanes && state.dotabuff.lanes[key];
-  const lane = { 1: 'safe', 5: 'safe', 2: 'mid', 3: 'off', 4: 'off' }[P];
-  let row = lanes && lanes[lane];
-  if (P === 4 && lanes && lanes.roaming && (!row || lanes.roaming[0] > row[0])) row = lanes.roaming;
-  if (!row) return null;
+  const d = metaData();
+  let wr = null;
+  if (d && d.pos) {
+    const r = d.pos[key] && d.pos[key][P];
+    if (r) wr = r[1];
+  } else {
+    const lanes = d && d.lanes && d.lanes[key];
+    const lane = { 1: 'safe', 5: 'safe', 2: 'mid', 3: 'off', 4: 'off' }[P];
+    let row = lanes && lanes[lane];
+    if (P === 4 && lanes && lanes.roaming && (!row || lanes.roaming[0] > row[0])) row = lanes.roaming;
+    if (row) wr = row[1];
+  }
+  if (wr == null) return null;
   // rare off-role picks (Lycan mid, …) are played mostly by specialists — their win rate is inflated,
   // so the meta weight grows with the hero's share of games on the position (full weight from 40%)
   const conf = Math.min(1, posShares(key)[P] / 0.4);
-  return { wr: row[1], delta: (row[1] - 50) * conf, conf };
+  return { wr, delta: (wr - 50) * conf, conf };
 }
 
 function enemyWeight(ek, P) {
@@ -572,7 +598,10 @@ function renderPosFilter() {
     `<span class="pos-label">${esc(t('picks.for'))}</span><div class="seg small">` +
     btn(0, esc(t('picks.any')), t('picks.any.title')) +
     [1, 2, 3, 4, 5].map((p) => btn(p, `<b>${p}</b> ${esc(posName(p))}`, t('picks.pos.title', { p }))).join('') +
-    '</div>';
+    '</div>' +
+    (state.pickPos ? `<span class="pos-label">${esc(t('sort.label'))}</span><div class="seg small">` +
+      ['score', 'share'].map((s) => `<button class="${state.sort === s ? 'active' : ''}" data-sort="${s}" aria-pressed="${state.sort === s}">${esc(t('sort.' + s))}</button>`).join('') +
+      '</div>' : '');
 }
 
 function renderPicksSkeleton() {
@@ -609,7 +638,8 @@ function renderPicks() {
     const metaPts = meta ? META_WEIGHT * meta.delta : 0;
     return [h.key, { counter, meta, metaPts, total: counter + metaPts }];
   }));
-  list.sort((a, b) => (state.tab === 'best' ? 1 : -1) * (parts.get(b.key).total - parts.get(a.key).total));
+  const sortKey = (h) => (P && state.sort === 'share' ? posShares(h.key)[P] : parts.get(h.key).total);
+  list.sort((a, b) => (state.tab === 'best' ? 1 : -1) * (sortKey(b) - sortKey(a)) || parts.get(b.key).total - parts.get(a.key).total);
 
   const limit = state.showAll ? list.length : 25;
   const max = Math.max(1, ...list.map((h) => Math.abs(parts.get(h.key).total)));
@@ -668,18 +698,19 @@ function renderSource() {
   $$('#source-switch button').forEach((b) => {
     b.classList.toggle('active', b.dataset.source === state.source);
     b.setAttribute('aria-pressed', b.dataset.source === state.source);
-    if (b.dataset.source === 'dotabuff') {
-      b.disabled = !state.dotabuff;
-      b.title = state.dotabuff ? '' : t('source.missing');
+    if (b.dataset.source !== 'opendota') {
+      const has = !!state[b.dataset.source];
+      b.disabled = !has;
+      b.title = has ? '' : t('source.missing');
     }
   });
-  const d = state.dotabuff;
+  const d = curData();
   const info = $('#data-info');
   const dot = $('#data-dot');
   let fresh = true;
-  if (state.source === 'dotabuff' && d) {
+  if (d) {
     const when = new Date(stamp(d)).toLocaleString(LANG, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
-    let txt = t('data.dotabuff', { period: periodName(d), when });
+    let txt = t(d.source === 'stratz' ? 'data.stratz' : 'data.dotabuff', { period: periodName(d), when });
     const age = Math.floor(dataAgeDays(d));
     if (age >= STALE_DAYS) { txt += t('data.stale', { n: age }); fresh = false; }
     info.textContent = txt;
@@ -794,6 +825,8 @@ function bind() {
   });
 
   $('#pos-filter').addEventListener('click', (ev) => {
+    const s = ev.target.closest('[data-sort]');
+    if (s) { state.sort = s.dataset.sort; state.showAll = false; renderPicks(); return; }
     const b = ev.target.closest('[data-pickpos]');
     if (!b) return;
     state.pickPos = +b.dataset.pickpos;
@@ -948,8 +981,9 @@ async function init() {
   renderLang();
   bind();
   renderPicksSkeleton();
-  const [meta] = await Promise.allSettled([loadHeroMeta(), loadDataScript()]);
+  const [meta] = await Promise.allSettled([loadHeroMeta(), loadDataScript('data.js'), loadDataScript('stratz.js')]);
   state.dotabuff = pickDotabuffData();
+  state.stratz = window.DBCP_STRATZ && window.DBCP_STRATZ.m ? window.DBCP_STRATZ : null;
 
   try {
     if (meta.status === 'rejected') throw meta.reason;
@@ -967,15 +1001,15 @@ async function init() {
   state.byKey = new Map(state.heroes.map((h) => [h.key, h]));
   ensureHeroesFromDotabuff();
 
-  const saved = store.get('dbcp_source');
+  // source: the saved choice if its data is there and fresh, else Stratz → Dotabuff → OpenDota live
   const haveOd = state.heroes.some((h) => h.id);
-  const stale = state.dotabuff && dataAgeDays(state.dotabuff) >= STALE_DAYS;
-  state.source = state.dotabuff && saved !== 'opendota' ? 'dotabuff' : 'opendota';
-  if (state.source === 'dotabuff' && stale && haveOd) {
-    state.source = 'opendota';
-    toast(t('toast.od.stale'));
-  }
-  if (!haveOd) state.source = 'dotabuff';
+  const fresh = (src) => state[src] && dataAgeDays(state[src]) < STALE_DAYS;
+  const saved = store.get('dbcp_source');
+  const order = ['stratz', 'dotabuff'];
+  if (saved === 'opendota' && haveOd) state.source = 'opendota';
+  else if (order.includes(saved) && fresh(saved)) state.source = saved;
+  else state.source = order.find(fresh) || (haveOd ? 'opendota' : order.find((s) => state[s]) || 'opendota');
+  if (saved && saved !== state.source && order.includes(saved) && state[saved]) toast(t('toast.od.stale'));
 
   readHash();
   autoAssign('ally');

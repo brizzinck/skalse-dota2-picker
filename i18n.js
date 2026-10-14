@@ -16,6 +16,7 @@ const I18N = {
     'meta.description': 'Dota 2 counter picker and item builds based on Dotabuff and OpenDota.',
     'data.loading': 'loading…',
     'data.dotabuff': 'Dotabuff · {period} · updated {when}',
+    'data.stratz': 'Stratz · {period} · updated {when}',
     'data.stale': ' · data is {n} d old',
     'data.opendota': 'OpenDota live · recent high-level matches',
     'data.none': 'no data',
@@ -27,7 +28,8 @@ const I18N = {
     'period.3month': 'last 3 months',
     'period.all': 'all matches',
     'source.aria': 'Data source',
-    'source.missing': 'No data.js — use “Update data” in the footer',
+    'source.missing': 'No data for this source yet',
+    'build.src.stratz': 'Items, purchase times and win rates for position {p} — {n} ranked games of the hero on this position ({patch}, Stratz).',
     'lang.aria': 'Language',
     'btn.reset': 'Reset all',
     'btn.reset.title': 'Clear enemies, your team and bans',
@@ -77,6 +79,9 @@ const I18N = {
 
     'picks.for': 'Picking for',
     'picks.any': 'Any',
+    'sort.label': 'Sort',
+    'sort.score': 'Score',
+    'sort.share': '% of games on position',
     'picks.any.title': 'Pure counter-pick, position ignored',
     'picks.pos.title': 'Only position {p} heroes: counter-pick + position meta',
     'tab.best': 'Best picks',
@@ -199,6 +204,7 @@ const I18N = {
     'meta.description': 'Контрпикер Dota 2 и билды предметов на данных Dotabuff и OpenDota.',
     'data.loading': 'загрузка…',
     'data.dotabuff': 'Dotabuff · {period} · обновлено {when}',
+    'data.stratz': 'Stratz · {period} · обновлено {when}',
     'data.stale': ' · данные старше {n} дн.',
     'data.opendota': 'OpenDota live · свежие матчи высокого уровня',
     'data.none': 'нет данных',
@@ -210,7 +216,8 @@ const I18N = {
     'period.3month': 'последние 3 месяца',
     'period.all': 'все матчи',
     'source.aria': 'Источник данных',
-    'source.missing': 'Нет data.js — «Обновить вручную» внизу страницы',
+    'source.missing': 'Для этого источника пока нет данных',
+    'build.src.stratz': 'Предметы, время покупки и винрейт для позиции {p} — {n} рейтинговых игр героя на этой позиции ({patch}, Stratz).',
     'lang.aria': 'Язык',
     'btn.reset': 'Сбросить всё',
     'btn.reset.title': 'Очистить врагов, свою команду и баны',
@@ -260,6 +267,9 @@ const I18N = {
 
     'picks.for': 'Пикаю на',
     'picks.any': 'Любая',
+    'sort.label': 'Сортировка',
+    'sort.score': 'Итог',
+    'sort.share': '% игр на позиции',
     'picks.any.title': 'Чистый контрпик, без учёта позиции',
     'picks.pos.title': 'Только герои позиции {p}: контрпик + мета позиции',
     'tab.best': 'Лучшие пики',
@@ -382,6 +392,7 @@ const I18N = {
     'meta.description': 'Контрпікер Dota 2 і білди предметів на даних Dotabuff та OpenDota.',
     'data.loading': 'завантаження…',
     'data.dotabuff': 'Dotabuff · {period} · оновлено {when}',
+    'data.stratz': 'Stratz · {period} · оновлено {when}',
     'data.stale': ' · дані старші за {n} дн.',
     'data.opendota': 'OpenDota live · свіжі матчі високого рівня',
     'data.none': 'немає даних',
@@ -393,7 +404,8 @@ const I18N = {
     'period.3month': 'останні 3 місяці',
     'period.all': 'усі матчі',
     'source.aria': 'Джерело даних',
-    'source.missing': 'Немає data.js — «Оновити вручну» внизу сторінки',
+    'source.missing': 'Для цього джерела поки немає даних',
+    'build.src.stratz': 'Предмети, час купівлі та вінрейт для позиції {p} — {n} рейтингових ігор героя на цій позиції ({patch}, Stratz).',
     'lang.aria': 'Мова',
     'btn.reset': 'Скинути все',
     'btn.reset.title': 'Очистити ворогів, свою команду і бани',
@@ -443,6 +455,9 @@ const I18N = {
 
     'picks.for': 'Пікаю на',
     'picks.any': 'Будь-яка',
+    'sort.label': 'Сортування',
+    'sort.score': 'Підсумок',
+    'sort.share': '% ігор на позиції',
     'picks.any.title': 'Чистий контрпік, без урахування позиції',
     'picks.pos.title': 'Лише герої позиції {p}: контрпік + мета позиції',
     'tab.best': 'Найкращі піки',
@@ -562,11 +577,21 @@ const I18N = {
   },
 };
 
-let LANG = DEFAULT_LANG;
-try {
-  const saved = localStorage.getItem('dbcp_lang');
-  if (saved && I18N[saved]) LANG = saved;
-} catch { /* storage unavailable — keep default */ }
+// Language: the visitor's saved choice → the browser's languages (uk / ru / en) → Ukrainian
+function detectLang() {
+  try {
+    const saved = localStorage.getItem('dbcp_lang');
+    if (saved && I18N[saved]) return saved;
+  } catch { /* storage unavailable */ }
+  const prefs = (navigator.languages && navigator.languages.length ? navigator.languages : [navigator.language || ''])
+    .map((l) => String(l).toLowerCase().slice(0, 2));
+  for (const l of prefs) {
+    if (l === 'uk' || l === 'ru' || l === 'en') return l;
+    if (l === 'be') return 'ru';
+  }
+  return DEFAULT_LANG;
+}
+let LANG = detectLang();
 
 function t(key, vars) {
   let s = I18N[LANG][key];

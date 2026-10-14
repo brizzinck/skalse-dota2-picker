@@ -1,3 +1,4 @@
 node_modules/
 update.log
 *.tmp
+.stratz-token
