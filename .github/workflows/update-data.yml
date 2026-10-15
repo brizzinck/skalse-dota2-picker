@@ -29,10 +29,10 @@ jobs:
       # Skipped when the DOTABUFF_PROXY variable is not set; a failure keeps the old data.js.
       - name: Collect Dotabuff
         env:
-          DOTABUFF_PROXY: ${{ vars.DOTABUFF_PROXY }}
-          DOTABUFF_PROXY_USER: ${{ vars.DOTABUFF_PROXY_USER }}
-          DOTABUFF_PROXY_COUNTRIES: ${{ vars.DOTABUFF_PROXY_COUNTRIES }}
-          DOTABUFF_PROXY_PASS: ${{ secrets.DOTABUFF_PROXY_PASS }}
+          DOTABUFF_PROXY: ${{ secrets.DOTABUFF_PROXY || vars.DOTABUFF_PROXY }}
+          DOTABUFF_PROXY_USER: ${{ secrets.DOTABUFF_PROXY_USER || vars.DOTABUFF_PROXY_USER }}
+          DOTABUFF_PROXY_COUNTRIES: ${{ secrets.DOTABUFF_PROXY_COUNTRIES || vars.DOTABUFF_PROXY_COUNTRIES }}
+          DOTABUFF_PROXY_PASS: ${{ secrets.DOTABUFF_PROXY_PASS || vars.DOTABUFF_PROXY_PASS }}
         if: env.DOTABUFF_PROXY != ''
         continue-on-error: true
         run: |
