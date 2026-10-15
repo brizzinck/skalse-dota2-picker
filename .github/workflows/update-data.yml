@@ -33,9 +33,12 @@ jobs:
           DOTABUFF_PROXY_USER: ${{ secrets.DOTABUFF_PROXY_USER || vars.DOTABUFF_PROXY_USER }}
           DOTABUFF_PROXY_COUNTRIES: ${{ secrets.DOTABUFF_PROXY_COUNTRIES || vars.DOTABUFF_PROXY_COUNTRIES }}
           DOTABUFF_PROXY_PASS: ${{ secrets.DOTABUFF_PROXY_PASS || vars.DOTABUFF_PROXY_PASS }}
-        if: env.DOTABUFF_PROXY != ''
         continue-on-error: true
         run: |
+          for v in DOTABUFF_PROXY DOTABUFF_PROXY_USER DOTABUFF_PROXY_COUNTRIES DOTABUFF_PROXY_PASS; do
+            if [ -n "${!v}" ]; then echo "$v: set"; else echo "$v: NOT SET"; fi
+          done
+          if [ -z "$DOTABUFF_PROXY" ]; then echo 'No proxy configured, skipping Dotabuff'; exit 0; fi
           npm i --no-save patchright playwright
           xvfb-run -a node scripts/update-data.mjs
 
