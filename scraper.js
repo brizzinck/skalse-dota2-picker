@@ -36,12 +36,26 @@ async function dbcpScrape(opts) {
   document.body.appendChild(box);
   const status = (t) => { box.textContent = 'Skalse Picker: ' + t; console.log('[Skalse]', t); };
 
+  // On datacenter IPs Cloudflare challenges every fetch(); scripts/update-data.mjs then provides
+  // window.dbcpLoad, which loads the page through a real navigation instead.
+  let viaNavigation = false;
+  async function load(path) {
+    if (!viaNavigation) {
+      const res = await fetch(path, { credentials: 'include' });
+      if (!(res.status === 403 && res.headers.get('cf-mitigated') === 'challenge' && window.dbcpLoad)) {
+        return { status: res.status, text: res.ok ? await res.text() : '' };
+      }
+      viaNavigation = true;
+    }
+    return window.dbcpLoad(path);
+  }
+
   async function get(path) {
     for (let attempt = 0; attempt < 5; attempt++) {
-      const res = await fetch(path, { credentials: 'include' });
-      if (res.ok) return new DOMParser().parseFromString(await res.text(), 'text/html');
+      const res = await load(path);
+      if (res.status >= 200 && res.status < 300) return new DOMParser().parseFromString(res.text, 'text/html');
       if (res.status === 404) return null;
-      if (res.status === 429 || res.status >= 500) { await sleep(2500 * (attempt + 1)); continue; }
+      if (res.status === 0 || res.status === 429 || res.status >= 500) { await sleep(2500 * (attempt + 1)); continue; }
       throw new Error(path + ' → HTTP ' + res.status);
     }
     throw new Error(path + ' → too many retries');

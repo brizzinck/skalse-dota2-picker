@@ -15,7 +15,7 @@ jobs:
   update:
     if: github.event_name != 'push'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 360 # GitHub-hosted maximum
     permissions:
       contents: write
     steps:
@@ -25,10 +25,21 @@ jobs:
         with:
           node-version: 22
 
-      # Stratz: plain API requests, no browser — the main source of fresh data.
-      # Dotabuff is NOT collected here: Cloudflare blocks browsers on GitHub's datacenter IPs.
-      # It is collected on a home PC instead (update-data.ps1 -Push, scheduled by install-autoupdate.ps1);
-      # scripts/update-data.mjs can still be run manually on any machine with Node and Chrome.
+      # Dotabuff: Cloudflare blocks GitHub's datacenter IPs, so Chrome goes through a proxy.
+      # Skipped when the DOTABUFF_PROXY variable is not set; a failure keeps the old data.js.
+      - name: Collect Dotabuff
+        env:
+          DOTABUFF_PROXY: ${{ vars.DOTABUFF_PROXY }}
+          DOTABUFF_PROXY_USER: ${{ vars.DOTABUFF_PROXY_USER }}
+          DOTABUFF_PROXY_COUNTRIES: ${{ vars.DOTABUFF_PROXY_COUNTRIES }}
+          DOTABUFF_PROXY_PASS: ${{ secrets.DOTABUFF_PROXY_PASS }}
+        if: env.DOTABUFF_PROXY != ''
+        continue-on-error: true
+        run: |
+          npm i --no-save patchright playwright
+          xvfb-run -a node scripts/update-data.mjs
+
+      # Stratz: plain API requests, no browser.
       - name: Collect Stratz
         env:
           STRATZ_TOKEN: ${{ secrets.STRATZ || vars.STRATZ }}
@@ -43,7 +54,7 @@ jobs:
           if git diff --cached --quiet; then
             echo 'Data unchanged'
           else
-            git commit -m "Update Stratz data $(date -u +%F)"
+            git commit -m "Update data $(date -u +%F)"
             git pull --rebase
             git push
           fi
