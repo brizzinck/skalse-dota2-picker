@@ -47,6 +47,7 @@ jobs:
         env:
           STRATZ_TOKEN: ${{ secrets.STRATZ || vars.STRATZ }}
         if: env.STRATZ_TOKEN != ''
+        continue-on-error: true   # one source failing must not stop the other's data from being committed
         run: node scripts/stratz.mjs
 
       - name: Commit data
