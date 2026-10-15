@@ -134,6 +134,7 @@ const state = {
   pickPos: 0,        // position we pick for: 0 (any — pure counter-pick) | 1–5
   opts: null,        // suggestion sorting, weights and filters (see OPT_DEFAULTS), saved in localStorage
   optsOpen: false,   // the options panel is expanded
+  prio: { on: false, strength: 'strong', order: [] }, // enemy priority: order[0] is the enemy you want to counter most
   side: 'dire',      // your side: 'radiant' (shown on the left, as in the game) | 'dire'
   ban: [],
   mode: 'enemy',
@@ -429,18 +430,48 @@ function compBonus(key, comp = teamComp()) {
   return Math.max(-COMP_MAX, Math.min(COMP_MAX, diff * COMP_WEIGHT));
 }
 
+/* ===================== enemy priority ===================== */
+
+// multiplier of a counter-pick against the enemy on each place of the priority list
+const PRIO_STRENGTH = {
+  soft: [1.6, 1.3, 1.1, 1, 0.9],
+  strong: [2.5, 1.75, 1.25, 1, 0.75],
+  focus: [3, 1, 0.6, 0.4, 0.3],
+};
+
+// the priority order, kept in sync with the picked enemies (new ones go to the end)
+function prioOrder() {
+  const enemies = state.enemy.filter(Boolean);
+  const order = state.prio.order.filter((k) => enemies.includes(k));
+  for (const k of enemies) if (!order.includes(k)) order.push(k);
+  state.prio.order = order;
+  return order;
+}
+
+function prioWeights() {
+  const m = new Map();
+  if (!state.prio.on) return m;
+  const W = PRIO_STRENGTH[state.prio.strength] || PRIO_STRENGTH.strong;
+  prioOrder().forEach((k, i) => m.set(k, W[i]));
+  return m;
+}
+
+const savePrio = () => store.set('dbcp_prio', { on: state.prio.on, strength: state.prio.strength });
+
 // Every number a suggestion can be ranked by. "Итог" (total) is a weighted sum; the weights live in the options.
 //   counter — sum of advantages against all enemies, lane — only against your lane opponents,
 //   meta — win rate on the position, comp — melee/ranged balance, safe — the worst single matchup.
 function scoreParts(key, P, comp = teamComp()) {
   const w = state.opts.w;
   const r = state.results && state.results.get(key);
+  const pw = prioWeights();
   let counter = 0, lane = 0, laneN = 0, safe = null;
   if (r) {
     for (const v of r.vs) {
       if (v.adv == null) continue;
-      counter += v.adv;
-      if (isLaneFoe(v.key, P)) { lane += v.adv; laneN++; }
+      const adv = v.adv * (pw.get(v.key) || 1); // enemy priority scales the counter-pick against that enemy
+      counter += adv;
+      if (isLaneFoe(v.key, P)) { lane += adv; laneN++; }
       safe = safe == null ? v.adv : Math.min(safe, v.adv);
     }
   }
@@ -464,15 +495,20 @@ const OPT_DEFAULTS = {
   sort: 'total', then: '', topN: 10,
   w: { counter: 1, lane: 1.5, meta: 0.5, comp: 1 },
   atk: '', minShare: MIN_POS_SHARE, pop: 0, hard: 0, laneOk: false, metaOk: false,
+  critOn: false, critOrder: ['counter', 'lane', 'meta', 'comp', 'games', 'wr', 'safe'],
 };
+// "Your own order": criteria ranked by dragging; each hero gets a 0–100 rating from its percentiles,
+// the first criterion weighs the most
+const CRITERIA = OPT_DEFAULTS.critOrder;
+const CRIT_W = [1, 0.6, 0.35, 0.2, 0.12, 0.07, 0.04];
 // a preset sets only the fields it names
 const PRESETS = {
-  balance: { sort: 'total', then: '', w: { counter: 1, lane: 1.5, meta: 0.5, comp: 1 } },
-  lane: { sort: 'total', then: '', w: { counter: 0.5, lane: 3, meta: 0.5, comp: 0.5 } },
-  counter: { sort: 'total', then: '', w: { counter: 1, lane: 1, meta: 0, comp: 0 } },
-  meta: { sort: 'total', then: '', w: { counter: 0.5, lane: 0.5, meta: 1.5, comp: 0.5 } },
-  popular: { sort: 'games', then: 'total', topN: 15 },
-  safe: { sort: 'safe', then: 'total', topN: 15 },
+  balance: { critOn: false, sort: 'total', then: '', w: { counter: 1, lane: 1.5, meta: 0.5, comp: 1 } },
+  lane: { critOn: false, sort: 'total', then: '', w: { counter: 0.5, lane: 3, meta: 0.5, comp: 0.5 } },
+  counter: { critOn: false, sort: 'total', then: '', w: { counter: 1, lane: 1, meta: 0, comp: 0 } },
+  meta: { critOn: false, sort: 'total', then: '', w: { counter: 0.5, lane: 0.5, meta: 1.5, comp: 0.5 } },
+  popular: { critOn: false, sort: 'games', then: 'total', topN: 15 },
+  safe: { critOn: false, sort: 'safe', then: 'total', topN: 15 },
 };
 
 function loadOpts() {
@@ -480,6 +516,9 @@ function loadOpts() {
   const o = { ...OPT_DEFAULTS, ...saved, w: { ...OPT_DEFAULTS.w, ...(saved.w || {}) } };
   if (!METRICS.includes(o.sort)) o.sort = 'total';
   if (o.then && !METRICS.includes(o.then)) o.then = '';
+  // keep the saved criteria order, drop unknown ones, add new ones at the end
+  o.critOrder = (Array.isArray(o.critOrder) ? o.critOrder : []).filter((k) => CRITERIA.includes(k));
+  for (const k of CRITERIA) if (!o.critOrder.includes(k)) o.critOrder.push(k);
   return o;
 }
 const saveOpts = () => store.set('dbcp_opts', state.opts);
@@ -497,7 +536,7 @@ function presetActive(name) {
 function optsChanged() {
   const o = state.opts, d = OPT_DEFAULTS;
   let n = WEIGHTS.filter((k) => o.w[k] !== d.w[k]).length;
-  for (const k of ['sort', 'then', 'atk', 'minShare', 'pop', 'hard', 'laneOk', 'metaOk']) if (o[k] !== d[k]) n++;
+  for (const k of ['sort', 'then', 'atk', 'minShare', 'pop', 'hard', 'laneOk', 'metaOk', 'critOn']) if (o[k] !== d[k]) n++;
   return n + state.roles.size + (state.attr ? 1 : 0);
 }
 
@@ -516,6 +555,7 @@ const compact = (n) => (n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e4 ? Math.
 function metricText(m, p, res) {
   const v = metricVal(m, p);
   if (v == null) return '—';
+  if (m === 'rank') return String(Math.round(v));
   if (m === 'meta') return p.meta.wr.toFixed(1) + '%';
   if (m === 'games') return compact(v);
   if (m === 'share') return Math.round(v * 100) + '%';
@@ -524,7 +564,7 @@ function metricText(m, p, res) {
 }
 function metricSign(m, p) {
   const v = metricVal(m, p);
-  if (v == null || m === 'games' || m === 'share') return 'plain';
+  if (v == null || m === 'games' || m === 'share' || m === 'rank') return 'plain';
   return sign(m === 'wr' ? v - 50 : v);
 }
 
@@ -644,6 +684,7 @@ function writeHash() {
   if (a.length) p.push('a=' + a.join(','));
   if (state.ban.length) p.push('b=' + state.ban.join(','));
   if (state.side === 'radiant') p.push('s=r');
+  if (state.prio.on && state.enemy.filter(Boolean).length > 1) p.push('p=' + prioOrder().join(','));
   history.replaceState(null, '', p.length ? '#' + p.join('&') : location.pathname + location.search);
 }
 
@@ -672,6 +713,10 @@ function readHash() {
     }
   }
   state.ban = (params.get('b') || '').split(',').map(norm).filter(valid);
+  if (params.has('p')) {
+    state.prio.on = true;
+    state.prio.order = params.get('p').split(',').map(norm);
+  }
   if (params.get('s') === 'r' || params.get('s') === 'd') state.side = params.get('s') === 'r' ? 'radiant' : 'dire';
 }
 
@@ -808,8 +853,11 @@ function renderPosFilter() {
 }
 
 function renderPresets() {
+  const on = state.opts.critOn;
   $('#presets').innerHTML = Object.keys(PRESETS).map((k) =>
-    `<button class="chip ${presetActive(k) ? 'active' : ''}" data-preset="${k}" title="${esc(t('preset.' + k + '.title'))}" aria-pressed="${presetActive(k)}">${esc(t('preset.' + k))}</button>`).join('');
+    `<button class="chip ${presetActive(k) ? 'active' : ''}" data-preset="${k}" title="${esc(t('preset.' + k + '.title'))}" aria-pressed="${presetActive(k)}">${esc(t('preset.' + k))}</button>`).join('') +
+    `<button class="chip crit-toggle ${on ? 'active' : ''}" data-crit-toggle title="${esc(t('crit.title'))}" aria-pressed="${on}"><span aria-hidden="true">⇅</span> ${esc(t('crit.toggle'))}</button>`;
+  renderCrit();
   const n = optsChanged();
   const cnt = $('#opts-count');
   cnt.hidden = !n;
@@ -838,7 +886,7 @@ function renderOpts() {
   const off = (m) => !metricOk(m, P, res);
   const sortKey = metricOk(o.sort, P, res) ? o.sort : 'total';
   const thenKey = o.then && o.then !== sortKey && metricOk(o.then, P, res) ? o.then : '';
-  const hint = thenKey ? t('opts.hint.then', { n: o.topN, a: ml(sortKey), b: ml(thenKey) }) : t('opts.hint.single', { a: ml(sortKey) });
+  const hint = o.critOn ? t('crit.sorted') : thenKey ? t('opts.hint.then', { n: o.topN, a: ml(sortKey), b: ml(thenKey) }) : t('opts.hint.single', { a: ml(sortKey) });
   const slider = (k) => {
     const posOnly = (k === 'lane' || k === 'meta') && !P;
     return `<label class="wslider ${posOnly ? 'idle' : ''}" title="${esc(t('metric.' + k + '.title'))}">
@@ -886,9 +934,124 @@ function renderPicksSkeleton() {
     '<div class="pick skeleton"><div class="sk sk-img"></div><div><div class="sk sk-line"></div><div class="sk sk-line short"></div></div><div class="sk sk-score"></div></div>').join('');
 }
 
+// Cards of the picked enemies above the suggestions. With priority on, drag them (or use ← →)
+// so that the enemy you hate most is first: counter-picks against it weigh the most.
+let prioDrag = null; // key of the card being dragged
+let critDrag = null;
+
+// the criteria that can be used right now (lane needs a position and enemy positions, …)
+const critActive = (P = targetPos(), res = state.results) => state.opts.critOrder.filter((k) => metricOk(k, P, res));
+
+function renderCrit() {
+  const el = $('#crit');
+  if (!state.opts.critOn) { el.hidden = true; el.innerHTML = ''; return; }
+  el.hidden = false;
+  const active = critActive();
+  el.innerHTML = `<div class="prio-head"><span class="prio-hint">${esc(t('crit.hint'))}</span></div>
+    <div class="crit-list" role="list">${state.opts.critOrder.map((k) => {
+      const i = active.indexOf(k);
+      const off = i === -1;
+      const w = off ? '' : Math.round((CRIT_W[i] / CRIT_W.slice(0, active.length).reduce((a, b) => a + b, 0)) * 100) + '%';
+      return `<div class="crit-chip${off ? ' off' : ''}${i === 0 ? ' first' : ''}${k === critDrag ? ' lifted' : ''}" data-key="${k}" role="listitem" tabindex="0"
+        title="${esc(off ? t('crit.off') : t('metric.' + k + '.title') + ' · ' + t('crit.drag'))}">
+        <b>${off ? '·' : i + 1}</b><span>${esc(t('metric.' + k))}</span>${off ? '' : `<em>${w}</em>`}</div>`;
+    }).join('')}</div>`;
+}
+function renderPrio() {
+  const el = $('#prio');
+  const order = prioOrder();
+  if (order.length < 2) { el.hidden = true; el.innerHTML = ''; return; }
+  el.hidden = false;
+  const on = state.prio.on;
+  const W = PRIO_STRENGTH[state.prio.strength] || PRIO_STRENGTH.strong;
+  const strength = Object.keys(PRIO_STRENGTH).map((k) =>
+    `<button class="${state.prio.strength === k ? 'active' : ''}" data-prio-strength="${k}" title="${esc(t('prio.s.' + k + '.title'))}" aria-pressed="${state.prio.strength === k}">${esc(t('prio.s.' + k))}</button>`).join('');
+  patchHTML(el, `<div class="prio-head">
+      <button class="toggle ${on ? 'on' : ''}" data-prio-toggle aria-pressed="${on}"><i aria-hidden="true"></i>${esc(t('prio.toggle'))}</button>
+      ${on ? `<div class="seg small" role="group">${strength}</div>` : ''}
+      <span class="prio-hint">${esc(t(on ? 'prio.hint.on' : 'prio.hint'))}</span>
+    </div>
+    <div class="prio-cards ${on ? 'on' : ''}" role="list" style="--n:${order.length}">${order.map((k, i) => {
+      const h = hero(k);
+      return `<div class="prio-card${k === prioDrag ? ' lifted' : ''}${on && i === 0 ? ' first' : ''}" data-key="${k}" role="listitem" tabindex="0"
+        title="${esc(t('prio.card.title', { name: h.name }))}" aria-label="${esc(`${i + 1}. ${h.name}`)}">
+        <img src="${h.img}" alt="" draggable="false">
+        <span class="prio-rank">${i + 1}</span>
+        ${on ? `<span class="prio-w">×${W[i]}</span>` : ''}
+        <span class="prio-name">${esc(h.name)}</span>
+      </div>`;
+    }).join('')}</div>`);
+}
+
+function prioChanged() {
+  writeHash();
+  renderPrio();
+  renderPicksList();
+  renderPool();
+}
+
+function moveInList(list, key, to) {
+  const from = list.indexOf(key);
+  to = Math.max(0, Math.min(list.length - 1, to));
+  if (from === -1 || from === to) return false;
+  list.splice(from, 1);
+  list.splice(to, 0, key);
+  return true;
+}
+const moveEnemyPrio = (key, to) => moveInList(prioOrder(), key, to);
+
+// Drag to reorder (pointer events: mouse and touch) plus ← → on a focused item.
+// The list re-renders while dragging, so the pointer is captured by the container, not the item.
+function sortable(box, sel, { start, move, end, step }) {
+  let drag = null;
+  box.addEventListener('pointerdown', (ev) => {
+    const item = ev.target.closest(sel);
+    if (!item || ev.button !== 0) return;
+    ev.preventDefault();
+    drag = { key: item.dataset.key, x: ev.clientX, y: ev.clientY, moved: false, id: ev.pointerId };
+    try { box.setPointerCapture(ev.pointerId); } catch { /* synthetic pointer */ }
+  });
+  box.addEventListener('pointermove', (ev) => {
+    if (!drag || ev.pointerId !== drag.id) return;
+    if (!drag.moved) {
+      if (Math.hypot(ev.clientX - drag.x, ev.clientY - drag.y) < 6) return;
+      drag.moved = true;
+      box.classList.add('dragging');
+      start(drag.key);
+    }
+    // new place = how many other items are before the pointer (rows first, then x)
+    let to = 0;
+    for (const el of $$(sel, box)) {
+      if (el.dataset.key === drag.key) continue;
+      const r = el.getBoundingClientRect();
+      if (r.bottom < ev.clientY || (r.top <= ev.clientY && ev.clientX > r.left + r.width / 2)) to++;
+    }
+    move(drag.key, to);
+  });
+  const stop = () => {
+    if (!drag) return;
+    const moved = drag.moved;
+    drag = null;
+    box.classList.remove('dragging');
+    if (moved) end();
+  };
+  box.addEventListener('pointerup', stop);
+  box.addEventListener('pointercancel', stop);
+  box.addEventListener('keydown', (ev) => {
+    const item = ev.target.closest(sel);
+    if (!item || (ev.key !== 'ArrowLeft' && ev.key !== 'ArrowRight')) return;
+    ev.preventDefault();
+    const key = item.dataset.key;
+    step(key, ev.key === 'ArrowLeft' ? -1 : 1);
+    const again = box.querySelector(`${sel}[data-key="${key}"]`);
+    if (again) again.focus();
+  });
+}
+
 function renderPicks() {
   renderPosFilter();
   renderPresets();
+  renderPrio();
   renderOpts();
   renderPicksList();
 }
@@ -933,9 +1096,29 @@ function renderPicksList() {
     return;
   }
 
+  // "your own order": a 0–100 rating from percentiles of the criteria, weighted by their place
+  if (o.critOn) {
+    const active = critActive(P, res);
+    const sumW = CRIT_W.slice(0, active.length).reduce((a, b) => a + b, 0) || 1;
+    for (const h of list) pp(h).rank = 0;
+    active.forEach((m, i) => {
+      const vals = list.map((h) => metricVal(m, pp(h)) ?? -Infinity).sort((a, b) => a - b);
+      const n = vals.length;
+      for (const h of list) {
+        const v = metricVal(m, pp(h)) ?? -Infinity;
+        let lo = 0, hi = n; // share of candidates with a lower value (ties count half)
+        while (lo < hi) { const mid = (lo + hi) >> 1; if (vals[mid] < v) lo = mid + 1; else hi = mid; }
+        let eq = lo;
+        while (eq < n && vals[eq] === v) eq++;
+        const pct = n > 1 ? (lo + (eq - lo - 1) / 2) / (n - 1) : 1;
+        pp(h).rank += (CRIT_W[i] * pct * 100) / sumW;
+      }
+    });
+  }
+
   // sort by one metric; optionally take its top N and re-sort them by a second one
-  const sortKey = metricOk(o.sort, P, res) ? o.sort : 'total';
-  const thenKey = o.then && o.then !== sortKey && metricOk(o.then, P, res) ? o.then : '';
+  const sortKey = o.critOn ? 'rank' : metricOk(o.sort, P, res) ? o.sort : 'total';
+  const thenKey = !o.critOn && o.then && o.then !== sortKey && metricOk(o.then, P, res) ? o.then : '';
   const dir = state.tab === 'best' ? 1 : -1;
   const by = (m) => (a, b) => {
     const va = metricVal(m, pp(a)), vb = metricVal(m, pp(b));
@@ -956,7 +1139,9 @@ function renderPicksList() {
       state.ally.filter(Boolean).map((k) => `<i class="${atkOf(k) || ''}"></i>`).join('')}</span>${
       esc(t('note.comp', { m: comp.melee, r: comp.ranged }))}${lack && o.w.comp ? ` <b>${esc(t('note.comp.need.' + lack))}</b>` : ''}</div>`
     : '';
-  const order = thenKey
+  const order = o.critOn
+    ? `<div class="picks-order">${esc(t('crit.order', { list: critActive(P, res).map((k) => t('metric.' + k)).join(' → ') }))}</div>`
+    : thenKey
     ? `<div class="picks-order">${esc(t('opts.hint.then', { n: o.topN, a: t('metric.' + sortKey), b: t('metric.' + thenKey) }))}</div>` : '';
 
   const limit = state.showAll ? list.length : Math.max(25, head.length);
@@ -978,7 +1163,9 @@ function pickCard(h, i, p, key, max, P, res, comp) {
   const r = res && res.get(h.key);
   const sub = P ? t('pick.share', { p: P, s: Math.round(posShares(h.key)[P] * 100) }) : h.roles.slice(0, 3).map((x) => t('role.' + x)).join(' · ');
   const atk = h.atk ? `<span class="atk ${h.atk}">${esc(t('atk.' + h.atk))}</span>` : '';
-  const vs = r ? r.vs.map((v) => {
+  const order = state.prio.on ? prioOrder() : null;
+  const vsList = r ? (order ? [...r.vs].sort((a, b) => order.indexOf(a.key) - order.indexOf(b.key)) : r.vs) : [];
+  const vs = r ? vsList.map((v) => {
     const e = hero(v.key);
     const lane = isLaneFoe(v.key, P);
     const title = v.adv === null ? t('vs.nodata', { name: e.name })
@@ -987,19 +1174,21 @@ function pickCard(h, i, p, key, max, P, res, comp) {
     return `<span class="vs ${lane ? 'lane' : ''}" title="${esc(title)}"><img src="${e.icon || e.img}" alt="">${lane ? `<em>${esc(t('vs.lane.short'))}</em>` : ''}<span class="${v.adv === null ? 'flat' : sign(v.adv)}">${v.adv === null ? '—' : fmt(v.adv)}</span></span>`;
   }).join('') : '';
   // what the hero's place is made of; the chip of the metric it is ranked by is highlighted
-  const chip = (m, cls, text, title) => `<span class="why ${cls}${m === key ? ' key' : ''}" title="${esc(title)}">${esc(text)}</span>`;
+  const hl = key === 'rank' ? critActive(P, res)[0] : key;
+  const chip = (m, cls, text, title) => `<span class="why ${cls}${m === hl ? ' key' : ''}" title="${esc(title)}">${esc(text)}</span>`;
   const why = [
     res ? chip('counter', sign(p.counter), t('why.counter', { v: fmt(p.counter) }), t('why.counter.title')) : '',
     p.laneN ? chip('lane', sign(p.lane), t('why.lane', { v: fmt(p.lane) }), t('why.lane.title')) : '',
     P && p.meta ? chip('meta', sign(p.metaPts), t('why.meta', { v: fmt(p.metaPts), wr: p.meta.wr.toFixed(1) }), t('why.meta.title', { p: P, wr: p.meta.wr.toFixed(1) }))
       : !P && p.meta && key === 'meta' ? chip('meta', sign(p.meta.delta), t('why.herowr', { wr: p.meta.wr.toFixed(1) }), t('why.herowr.title')) : '',
     p.compPts ? chip('comp', sign(p.compPts), t('why.comp', { v: fmt(p.compPts) }), t('why.comp.title', { m: comp.melee, r: comp.ranged })) : '',
-    key === 'safe' && p.safe != null ? chip('safe', sign(p.safe), t('why.safe', { v: fmt(p.safe) }), t('metric.safe.title')) : '',
+    hl === 'wr' && p.wr != null ? chip('wr', sign(p.wr - 50), t('pick.wr', { wr: p.wr.toFixed(1) }), t('metric.wr')) : '',
+    hl === 'safe' && p.safe != null ? chip('safe', sign(p.safe), t('why.safe', { v: fmt(p.safe) }), t('metric.safe.title')) : '',
     p.games ? chip('games', 'plain', t('why.games', { n: compact(p.games) }), P ? t('why.games.title.pos', { p: P }) : t('why.games.title')) : '',
   ].filter(Boolean).join('');
   const v = metricVal(key, p);
-  const signed = !['games', 'share', 'wr', 'meta'].includes(key);
-  const pct = v == null ? 0 : key === 'wr' || key === 'meta' && !signed
+  const signed = !['games', 'share', 'wr', 'meta', 'rank'].includes(key);
+  const pct = v == null ? 0 : key === 'rank' ? Math.round(v) : key === 'wr' || key === 'meta' && !signed
     ? Math.round(Math.max(0, Math.min(1, ((key === 'wr' ? v : p.meta.wr) - 44) / 12)) * 100)
     : Math.round((Math.abs(v) / max) * 100);
   const neg = v != null && (signed ? v < 0 : key === 'wr' ? v < 50 : key === 'meta' ? p.meta.wr < 50 : false);
@@ -1018,7 +1207,7 @@ function pickCard(h, i, p, key, max, P, res, comp) {
       </div>
       <div class="pick-score">
         <b class="${metricSign(key, p)}">${metricText(key, p, res)}</b>
-        <small>${esc(key === 'total' && r && r.wr != null ? t('pick.wr', { wr: r.wr.toFixed(1) }) : t('metric.' + key))}</small>
+        <small>${esc(key === 'total' && r && r.wr != null ? t('pick.wr', { wr: r.wr.toFixed(1) }) : t(key === 'rank' ? 'crit.rating' : 'metric.' + key))}</small>
         <div class="bar"><span style="width:${pct}%"></span></div>
         <span class="pick-add" aria-hidden="true">+ ${esc(t('pick.add'))}</span>
       </div>
@@ -1192,6 +1381,46 @@ function bind() {
     renderPicks();
     renderPool();
   };
+  // ---- enemy priority: toggle, strength, drag and drop (pointer events: mouse and touch) ----
+  const prio = $('#prio');
+  prio.addEventListener('click', (ev) => {
+    if (ev.target.closest('[data-prio-toggle]')) {
+      state.prio.on = !state.prio.on;
+    } else {
+      const b = ev.target.closest('[data-prio-strength]');
+      if (!b || b.dataset.prioStrength === state.prio.strength) return;
+      state.prio.strength = b.dataset.prioStrength;
+    }
+    savePrio();
+    prioChanged();
+  });
+  sortable(prio, '.prio-card', {
+    start: (key) => {
+      prioDrag = key;
+      if (!state.prio.on) { state.prio.on = true; savePrio(); } // dragging turns priority on
+      renderPrio();
+    },
+    move: (key, to) => { if (moveEnemyPrio(key, to)) renderPrio(); },
+    end: () => { prioDrag = null; prioChanged(); },
+    step: (key, d) => {
+      if (!state.prio.on) { state.prio.on = true; savePrio(); }
+      moveEnemyPrio(key, prioOrder().indexOf(key) + d);
+      prioChanged();
+    },
+  });
+
+  // ---- criteria order: the same drag and drop over the criteria chips ----
+  const crit = $('#crit');
+  sortable(crit, '.crit-chip', {
+    start: (key) => { critDrag = key; renderCrit(); },
+    move: (key, to) => { if (moveInList(state.opts.critOrder, key, to)) renderCrit(); },
+    end: () => { critDrag = null; saveOpts(); renderCrit(); renderPicksList(); renderPool(); },
+    step: (key, d) => {
+      moveInList(state.opts.critOrder, key, state.opts.critOrder.indexOf(key) + d);
+      saveOpts(); renderCrit(); renderPicksList(); renderPool();
+    },
+  });
+
   $('#btn-opts').addEventListener('click', () => {
     state.optsOpen = !state.optsOpen;
     store.set('dbcp_opts_open', state.optsOpen);
@@ -1199,6 +1428,11 @@ function bind() {
     renderOpts();
   });
   $('#presets').addEventListener('click', (ev) => {
+    if (ev.target.closest('[data-crit-toggle]')) {
+      state.opts.critOn = !state.opts.critOn;
+      optsChangedNow();
+      return;
+    }
     const b = ev.target.closest('[data-preset]');
     if (!b) return;
     applyPreset(b.dataset.preset);
@@ -1213,6 +1447,7 @@ function bind() {
       const cur = o[b.dataset.opt];
       o[b.dataset.opt] = typeof OPT_DEFAULTS[b.dataset.opt] === 'number' ? +b.dataset.v : b.dataset.v;
       if (b.dataset.opt === 'sort' && o.then === o.sort) o.then = '';
+      if (['sort', 'then', 'topN'].includes(b.dataset.opt)) o.critOn = false; // picking a sort here leaves "your own order"
       if (cur === o[b.dataset.opt]) return;
     } else if (b.dataset.toggle) {
       o[b.dataset.toggle] = !o[b.dataset.toggle];
@@ -1221,7 +1456,7 @@ function bind() {
     } else if (b.dataset.attr) {
       state.attr = state.attr === b.dataset.attr ? null : b.dataset.attr;
     } else if ('reset' in b.dataset) {
-      state.opts = { ...OPT_DEFAULTS, w: { ...OPT_DEFAULTS.w } };
+      state.opts = { ...OPT_DEFAULTS, w: { ...OPT_DEFAULTS.w }, critOrder: [...OPT_DEFAULTS.critOrder] };
       state.roles.clear();
       state.attr = null;
     } else return;
@@ -1377,6 +1612,9 @@ async function init() {
   state.opts = loadOpts();
   state.optsOpen = !!store.get('dbcp_opts_open');
   state.side = store.get('dbcp_side') === 'radiant' ? 'radiant' : 'dire';
+  const prio = store.get('dbcp_prio') || {};
+  state.prio.on = !!prio.on;
+  if (PRIO_STRENGTH[prio.strength]) state.prio.strength = prio.strength;
   applyI18n();
   renderLang();
   renderSide();

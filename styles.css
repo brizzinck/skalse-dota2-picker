@@ -440,6 +440,63 @@ code { font-size: 12px; padding: 1px 5px; border-radius: 4px; background: var(--
   font: 700 10px/1 Inter, system-ui, sans-serif; color: #0b0b0d; background: var(--accent);
 }
 
+/* enemy priority: draggable enemy cards above the suggestions */
+.prio { display: flex; flex-direction: column; gap: 8px; margin: 8px 8px 0; padding: 10px; border-radius: 12px; background: var(--bg-2); border: 1px solid var(--line); }
+.prio[hidden] { display: none; }
+.prio-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.prio-hint { color: var(--faint); font-size: 11.5px; flex: 1; min-width: 160px; }
+.prio-cards { display: grid; grid-template-columns: repeat(var(--n, 5), minmax(0, 150px)); gap: 6px; }
+.prio-card {
+  position: relative; aspect-ratio: 16 / 9; border-radius: 8px; overflow: hidden;
+  border: 1px solid var(--line-2); background: var(--card-2);
+  cursor: grab; touch-action: none; user-select: none;
+  transition: transform .15s var(--ease), box-shadow .15s, border-color .15s, opacity .15s;
+}
+.prio-card img { width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; }
+.prio-card:hover { border-color: var(--muted); }
+.prio-cards:not(.on) .prio-card { opacity: .75; }
+.prio-cards:not(.on) .prio-card:hover { opacity: 1; }
+.prio-card.first { border-color: var(--enemy); box-shadow: 0 0 0 1px var(--enemy-soft), 0 4px 14px rgba(212, 163, 115, .18); }
+.prio-card.lifted { cursor: grabbing; transform: translateY(-3px) scale(1.04); z-index: 2; border-color: var(--text); box-shadow: 0 10px 24px rgba(0, 0, 0, .55); }
+.prio.dragging .prio-card:not(.lifted) { opacity: .7; }
+.prio-rank {
+  position: absolute; top: 3px; left: 3px; min-width: 18px; height: 18px; padding: 0 4px; border-radius: 5px;
+  font: 700 12px/18px Rajdhani, sans-serif; text-align: center; color: var(--text); background: rgba(0, 0, 0, .75);
+}
+.prio-card.first .prio-rank { color: #1c140c; background: var(--enemy); }
+.prio-w {
+  position: absolute; top: 3px; right: 3px; padding: 2px 4px; border-radius: 5px;
+  font: 700 10px/1.2 Inter, system-ui, sans-serif; color: var(--text); background: rgba(0, 0, 0, .75);
+}
+.prio-name {
+  position: absolute; left: 0; right: 0; bottom: 0; padding: 8px 5px 3px;
+  font-size: 10.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  background: linear-gradient(transparent, rgba(0, 0, 0, .9));
+}
+
+.crit-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.crit-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  font: 600 12px/1 Inter, system-ui, sans-serif; color: var(--text);
+  padding: 6px 9px 6px 6px; border-radius: 8px;
+  background: var(--card-2); border: 1px solid var(--line-2);
+  cursor: grab; touch-action: none; user-select: none;
+  transition: transform .15s var(--ease), box-shadow .15s, border-color .15s, opacity .15s;
+}
+.crit-chip b {
+  min-width: 18px; height: 18px; padding: 0 4px; border-radius: 5px; display: inline-grid; place-items: center;
+  font: 700 12px/1 Rajdhani, sans-serif; color: var(--muted); background: var(--bg-2);
+}
+.crit-chip em { font-style: normal; font-size: 10.5px; color: var(--faint); }
+.crit-chip:hover { border-color: var(--muted); }
+.crit-chip.first { border-color: rgba(122, 167, 234, .55); background: var(--accent-soft); }
+.crit-chip.first b { color: #0b0b0d; background: var(--accent); }
+.crit-chip.off { opacity: .4; }
+.crit-chip.lifted { cursor: grabbing; transform: translateY(-2px) scale(1.04); border-color: var(--text); box-shadow: 0 8px 20px rgba(0, 0, 0, .5); z-index: 2; }
+.crit.dragging .crit-chip:not(.lifted) { opacity: .7; }
+.crit.dragging .crit-chip.off:not(.lifted) { opacity: .3; }
+.chip.crit-toggle.active { color: var(--accent-ink); background: var(--accent-soft); border-color: rgba(122, 167, 234, .5); }
+
 .opts {
   display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 270px), 1fr)); gap: 8px;
   margin: 8px 8px 0; padding: 8px; border-radius: 12px; background: var(--bg-2); border: 1px solid var(--line);
