@@ -48,6 +48,7 @@
       <div class="team team-enemy">
         <div class="team-head">
           <span class="team-label" data-i18n="team.enemy">Enemies</span>
+          <button class="side-badge" data-swap></button>
           <span class="team-hint" data-i18n="hint.enemy">left click</span>
           <button class="clear-btn" data-clear="enemy"><span aria-hidden="true">✕</span> <span data-i18n="btn.clear">Clear</span></button>
         </div>
@@ -56,6 +57,7 @@
       <div class="team team-ally">
         <div class="team-head">
           <span class="team-label" data-i18n="team.ally">Your team</span>
+          <button class="side-badge" data-swap></button>
           <span class="team-hint" data-i18n="hint.ally">right click</span>
           <button class="jump-btn" id="jump-builds" data-i18n-title="btn.jump.title" hidden><span data-i18n="btn.jump">Builds ↓</span></button>
           <button class="clear-btn" data-clear="ally"><span aria-hidden="true">✕</span> <span data-i18n="btn.clear">Clear</span></button>
@@ -93,13 +95,19 @@
     <section class="picks card" id="picks">
       <div class="picks-head">
         <div class="pos-filter" id="pos-filter"></div>
-        <div class="seg" id="picks-tab" role="group">
-          <button data-tab="best" class="active" aria-pressed="true" data-i18n="tab.best">Best picks</button>
-          <button data-tab="worst" aria-pressed="false" data-i18n="tab.worst">Worst picks</button>
+        <div class="picks-toolbar">
+          <div class="seg" id="picks-tab" role="group">
+            <button data-tab="best" class="active" aria-pressed="true" data-i18n="tab.best">Best picks</button>
+            <button data-tab="worst" aria-pressed="false" data-i18n="tab.worst">Worst picks</button>
+          </div>
+          <button class="opts-btn" id="btn-opts" aria-expanded="false" aria-controls="opts"><span aria-hidden="true">⚙</span><span data-i18n="opts.btn">Filters</span><span class="opts-count" id="opts-count" hidden></span></button>
         </div>
-        <div class="chips" id="role-filter"></div>
+        <div class="chips presets" id="presets"></div>
       </div>
-      <div id="picks-body" class="picks-body"></div>
+      <div class="picks-scroll" id="picks-scroll">
+        <div class="opts" id="opts" hidden></div>
+        <div id="picks-body" class="picks-body"></div>
+      </div>
     </section>
   </main>
 

@@ -132,7 +132,9 @@ const state = {
   enemyManual: [false, false, false, false, false], // position set by the user
   allyManual: [false, false, false, false, false],
   pickPos: 0,        // position we pick for: 0 (any — pure counter-pick) | 1–5
-  sort: 'score',     // with a position: 'score' (counter-pick + meta) | 'share' (% of the hero's games on it)
+  opts: null,        // suggestion sorting, weights and filters (see OPT_DEFAULTS), saved in localStorage
+  optsOpen: false,   // the options panel is expanded
+  side: 'dire',      // your side: 'radiant' (shown on the left, as in the game) | 'dire'
   ban: [],
   mode: 'enemy',
   tab: 'best',
@@ -145,6 +147,7 @@ const state = {
 };
 
 const hero = (k) => state.byKey.get(k);
+const atkOf = (k) => (hero(k) || {}).atk || null;
 const taken = () => new Set([...state.enemy, ...state.ally, ...state.ban].filter(Boolean));
 
 /* ===================== data ===================== */
@@ -157,6 +160,8 @@ async function loadHeroMeta() {
     name: h.localized_name,
     attr: h.primary_attr,
     roles: h.roles || [],
+    picks: h.pub_pick || 0,
+    atk: h.attack_type === 'Melee' ? 'melee' : h.attack_type === 'Ranged' ? 'ranged' : null,
     img: CDN + h.img.replace(/\?$/, ''),
     icon: CDN + h.icon.replace(/\?$/, ''),
     wr: h.pub_pick ? (h.pub_win / h.pub_pick) * 100 : 50,
@@ -281,7 +286,6 @@ function renderAll() {
 /* ===================== positions ===================== */
 
 const MIN_POS_SHARE = 0.1;  // a hero "plays" a position if ≥10% of their games are there
-const LANE_WEIGHT = 1.5;    // your lane opponent weighs more
 
 // Hero game share per position: Stratz positions directly, or Dotabuff lanes + GPM
 // (on one lane a core farms much more than a support)
@@ -352,7 +356,6 @@ const targetPos = () => state.pickPos || null;
 
 // Position meta: the hero's win rate on that position in the current patch
 // (Stratz: exactly on the position; Dotabuff: on the position's lane)
-const META_WEIGHT = 0.5; // counter-picks matter more: meta adds ±2–3% at most, counters vs five heroes up to ±10%
 function posMeta(key, P) {
   if (!P) return null;
   const d = metaData();
@@ -374,21 +377,155 @@ function posMeta(key, P) {
   return { wr, delta: (wr - 50) * conf, conf };
 }
 
-function enemyWeight(ek, P) {
-  if (!P) return 1;
+// is this enemy your lane opponent when you pick for position P?
+function isLaneFoe(ek, P) {
+  if (!P) return false;
   const ep = state.enemyPos[state.enemy.indexOf(ek)];
-  return ep && LANE_FOES[P].includes(ep) ? LANE_WEIGHT : 1;
+  return !!ep && LANE_FOES[P].includes(ep);
 }
 
-function scoreFor(key, P) {
+// games of the hero in the current patch (on position P when given)
+function heroGames(key, P) {
+  const d = metaData();
+  const ps = d && d.pos && d.pos[key];
+  if (ps) return P ? (ps[P] ? ps[P][0] : 0) : Object.values(ps).reduce((n, r) => n + r[0], 0);
+  const total = (d && d.games && d.games[key]) || (hero(key) || {}).picks || 0;
+  return P ? total * posShares(key)[P] : total;
+}
+
+// the hero's overall win rate in the patch (Stratz: over all positions; otherwise OpenDota pubs)
+function heroWr(key) {
+  const d = metaData();
+  const ps = d && d.pos && d.pos[key];
+  if (ps) {
+    let n = 0, w = 0;
+    for (const [g, wr] of Object.values(ps)) { n += g; w += g * wr; }
+    if (n) return w / n;
+  }
+  const h = hero(key);
+  return h ? h.wr : null;
+}
+
+function metaFor(key, P) {
+  if (P) return posMeta(key, P);
+  const wr = heroWr(key);
+  return wr == null ? null : { wr, delta: wr - 50, conf: 1 };
+}
+
+// Team composition: your picked heroes' melee/ranged split. A team of only melee heroes (or only ranged)
+// is easy to kite or to dive, so the missing attack type gets a bonus and the overrepresented one a penalty.
+const COMP_WEIGHT = 0.75; // per hero of difference, from a difference of 2: ±1.5 … ±2.25
+const COMP_MAX = 2.25;
+function teamComp() {
+  const c = { melee: 0, ranged: 0 };
+  for (const k of state.ally) if (k && atkOf(k)) c[atkOf(k)]++;
+  return c;
+}
+function compBonus(key, comp = teamComp()) {
+  const a = atkOf(key);
+  if (!a) return 0;
+  const diff = comp[a === 'melee' ? 'ranged' : 'melee'] - comp[a];
+  if (Math.abs(diff) < 2) return 0;
+  return Math.max(-COMP_MAX, Math.min(COMP_MAX, diff * COMP_WEIGHT));
+}
+
+// Every number a suggestion can be ranked by. "Итог" (total) is a weighted sum; the weights live in the options.
+//   counter — sum of advantages against all enemies, lane — only against your lane opponents,
+//   meta — win rate on the position, comp — melee/ranged balance, safe — the worst single matchup.
+function scoreParts(key, P, comp = teamComp()) {
+  const w = state.opts.w;
   const r = state.results && state.results.get(key);
-  if (!r) return 0;
-  return r.vs.reduce((s, v) => s + (v.adv == null ? 0 : v.adv * enemyWeight(v.key, P)), 0);
+  let counter = 0, lane = 0, laneN = 0, safe = null;
+  if (r) {
+    for (const v of r.vs) {
+      if (v.adv == null) continue;
+      counter += v.adv;
+      if (isLaneFoe(v.key, P)) { lane += v.adv; laneN++; }
+      safe = safe == null ? v.adv : Math.min(safe, v.adv);
+    }
+  }
+  const meta = metaFor(key, P);
+  const metaPts = P && meta ? w.meta * meta.delta : 0; // "Any position" stays a pure counter-pick
+  const compPts = w.comp * compBonus(key, comp);
+  const total = w.counter * (counter - lane) + w.lane * lane + metaPts + compPts;
+  return {
+    counter, lane, laneN, safe, meta, metaPts, compPts, total,
+    wr: r ? r.wr : null, games: heroGames(key, P), share: P ? posShares(key)[P] : null,
+  };
 }
 
-function totalScore(key, P) {
-  const m = posMeta(key, P);
-  return scoreFor(key, P) + (m ? META_WEIGHT * m.delta : 0);
+const totalScore = (key, P) => scoreParts(key, P).total;
+
+/* ===================== suggestion options ===================== */
+
+const METRICS = ['total', 'counter', 'lane', 'meta', 'games', 'share', 'wr', 'safe', 'comp'];
+const WEIGHTS = ['counter', 'lane', 'meta', 'comp'];
+const OPT_DEFAULTS = {
+  sort: 'total', then: '', topN: 10,
+  w: { counter: 1, lane: 1.5, meta: 0.5, comp: 1 },
+  atk: '', minShare: MIN_POS_SHARE, pop: 0, hard: 0, laneOk: false, metaOk: false,
+};
+// a preset sets only the fields it names
+const PRESETS = {
+  balance: { sort: 'total', then: '', w: { counter: 1, lane: 1.5, meta: 0.5, comp: 1 } },
+  lane: { sort: 'total', then: '', w: { counter: 0.5, lane: 3, meta: 0.5, comp: 0.5 } },
+  counter: { sort: 'total', then: '', w: { counter: 1, lane: 1, meta: 0, comp: 0 } },
+  meta: { sort: 'total', then: '', w: { counter: 0.5, lane: 0.5, meta: 1.5, comp: 0.5 } },
+  popular: { sort: 'games', then: 'total', topN: 15 },
+  safe: { sort: 'safe', then: 'total', topN: 15 },
+};
+
+function loadOpts() {
+  const saved = store.get('dbcp_opts') || {};
+  const o = { ...OPT_DEFAULTS, ...saved, w: { ...OPT_DEFAULTS.w, ...(saved.w || {}) } };
+  if (!METRICS.includes(o.sort)) o.sort = 'total';
+  if (o.then && !METRICS.includes(o.then)) o.then = '';
+  return o;
+}
+const saveOpts = () => store.set('dbcp_opts', state.opts);
+
+function applyPreset(name) {
+  const p = PRESETS[name];
+  Object.assign(state.opts, p, { w: { ...state.opts.w, ...(p.w || {}) } });
+}
+function presetActive(name) {
+  const p = PRESETS[name], o = state.opts;
+  return Object.entries(p).every(([k, v]) => (k === 'w' ? WEIGHTS.every((x) => o.w[x] === v[x]) : o[k] === v));
+}
+
+// how many settings differ from the defaults (shown on the "Filters" button)
+function optsChanged() {
+  const o = state.opts, d = OPT_DEFAULTS;
+  let n = WEIGHTS.filter((k) => o.w[k] !== d.w[k]).length;
+  for (const k of ['sort', 'then', 'atk', 'minShare', 'pop', 'hard', 'laneOk', 'metaOk']) if (o[k] !== d[k]) n++;
+  return n + state.roles.size + (state.attr ? 1 : 0);
+}
+
+// a metric can be ranked by only when its data is there
+function metricOk(m, P, res) {
+  if (m === 'counter' || m === 'wr' || m === 'safe') return !!res;
+  if (m === 'lane') return !!(res && P && state.enemy.some((k, i) => k && LANE_FOES[P].includes(state.enemyPos[i])));
+  if (m === 'share') return !!P;
+  return true;
+}
+
+const metricVal = (m, p) => (m === 'meta' ? (p.meta ? p.meta.delta : null) : m === 'comp' ? p.compPts : p[m]);
+
+const compact = (n) => (n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e4 ? Math.round(n / 1e3) + 'k' : n >= 1e3 ? (n / 1e3).toFixed(1) + 'k' : String(Math.round(n)));
+
+function metricText(m, p, res) {
+  const v = metricVal(m, p);
+  if (v == null) return '—';
+  if (m === 'meta') return p.meta.wr.toFixed(1) + '%';
+  if (m === 'games') return compact(v);
+  if (m === 'share') return Math.round(v * 100) + '%';
+  if (m === 'wr') return v.toFixed(1) + '%';
+  return fmt(v) + (res || m === 'comp' ? '%' : '');
+}
+function metricSign(m, p) {
+  const v = metricVal(m, p);
+  if (v == null || m === 'games' || m === 'share') return 'plain';
+  return sign(m === 'wr' ? v - 50 : v);
 }
 
 /* ===================== actions & undo ===================== */
@@ -506,6 +643,7 @@ function writeHash() {
   if (e.length) p.push('e=' + e.join(','));
   if (a.length) p.push('a=' + a.join(','));
   if (state.ban.length) p.push('b=' + state.ban.join(','));
+  if (state.side === 'radiant') p.push('s=r');
   history.replaceState(null, '', p.length ? '#' + p.join('&') : location.pathname + location.search);
 }
 
@@ -534,9 +672,58 @@ function readHash() {
     }
   }
   state.ban = (params.get('b') || '').split(',').map(norm).filter(valid);
+  if (params.get('s') === 'r' || params.get('s') === 'd') state.side = params.get('s') === 'r' ? 'radiant' : 'dire';
 }
 
 /* ===================== rendering ===================== */
+
+// Under a picked hero: whom it beats most (▲) and who beats it (▼) among the other team's heroes.
+// Values are from that hero's point of view; colour is from yours: blue = good for you, amber = a threat.
+function slotMatchups(side, k) {
+  const res = state.results;
+  const opp = (side === 'ally' ? state.enemy : state.ally).filter(Boolean);
+  if (!res || !opp.length) return '';
+  const rows = opp.map((o) => {
+    const r = res.get(side === 'ally' ? k : o);
+    const v = r && r.vs.find((x) => x.key === (side === 'ally' ? o : k));
+    if (!v || v.adv == null) return null;
+    return { key: o, adv: side === 'ally' ? v.adv : -v.adv, ours: v.adv };
+  }).filter(Boolean).sort((a, b) => b.adv - a.adv);
+  if (!rows.length) return '';
+  const name = hero(k).name;
+  const row = (x, beats) => {
+    const tone = x.ours > 0.05 ? 'good' : x.ours < -0.05 ? 'threat' : 'even';
+    return `<span class="mu ${tone}"><i aria-hidden="true">${beats ? '▲' : '▼'}</i><img src="${hero(x.key).icon || hero(x.key).img}" alt="${esc(hero(x.key).name)}"><b>${fmt(x.adv)}</b></span>`;
+  };
+  const best = rows[0], worst = rows[rows.length - 1];
+  const out = [];
+  if (best.adv > 0.3) out.push(row(best, true));
+  if (worst.adv < -0.3 && worst !== best) out.push(row(worst, false));
+  const title = rows.map((x) => t(x.adv >= 0 ? 'mu.beats' : 'mu.loses', { a: name, b: hero(x.key).name, v: fmt(x.adv) })).join('\n');
+  return `<div class="slot-mu" title="${esc(title)}">${out.length ? out.join('') : `<span class="mu even">${esc(t('mu.even'))}</span>`}</div>`;
+}
+
+function renderSide() {
+  const allyLeft = state.side === 'radiant';
+  $('#draft').classList.toggle('ally-left', allyLeft);
+  for (const team of ['ally', 'enemy']) {
+    const side = (team === 'ally') === allyLeft ? 'radiant' : 'dire';
+    const el = $('.team-' + team);
+    el.classList.toggle('side-radiant', side === 'radiant');
+    el.classList.toggle('side-dire', side === 'dire');
+    const b = $('[data-swap]', el);
+    b.innerHTML = `<span aria-hidden="true">${side === 'radiant' ? '☀' : '☾'}</span>${esc(t('side.' + side))}<span class="swap-ico" aria-hidden="true">⇄</span>`;
+    b.title = t('side.swap.title');
+  }
+}
+
+function swapSides() {
+  state.side = state.side === 'radiant' ? 'dire' : 'radiant';
+  store.set('dbcp_side', state.side);
+  renderSide();
+  writeHash();
+  toast(t('toast.side', { side: t('side.' + state.side) }));
+}
 
 function renderSlots() {
   for (const side of ['enemy', 'ally']) {
@@ -558,6 +745,7 @@ function renderSlots() {
         </button>
         <div class="pos-pick" role="group">${pos}</div>
         <div class="slot-role">${cur ? esc(posName(cur)) : ''}</div>
+        ${slotMatchups(side, k)}
       </div>`;
     }).join(''));
   }
@@ -609,14 +797,6 @@ function tile(h, matches, first, res) {
     <img src="${h.img}" alt="" loading="lazy">${badge}<span class="tile-name">${esc(h.name)}</span></div>`;
 }
 
-function renderRoleFilter() {
-  const chips = ROLE_KEYS.map((k) =>
-    `<button class="chip ${state.roles.has(k) ? 'active' : ''}" data-role="${k}" aria-pressed="${state.roles.has(k)}">${esc(t('role.' + k))}</button>`);
-  const attrs = ATTRS.map((a) =>
-    `<button class="chip ${state.attr === a.k ? 'active' : ''}" data-attr="${a.k}" aria-pressed="${state.attr === a.k}"><span class="dot" style="background:${a.color}"></span>${esc(t('attr.' + a.k))}</button>`);
-  $('#role-filter').innerHTML = chips.join('') + attrs.join('');
-}
-
 function renderPosFilter() {
   const btn = (v, label, title) =>
     `<button class="${state.pickPos === v ? 'active' : ''}" data-pickpos="${v}" title="${esc(title)}" aria-pressed="${state.pickPos === v}">${label}</button>`;
@@ -624,23 +804,100 @@ function renderPosFilter() {
     `<span class="pos-label">${esc(t('picks.for'))}</span><div class="seg small">` +
     btn(0, esc(t('picks.any')), t('picks.any.title')) +
     [1, 2, 3, 4, 5].map((p) => btn(p, `<b>${p}</b> ${esc(posName(p))}`, t('picks.pos.title', { p }))).join('') +
-    '</div>' +
-    (state.pickPos ? `<span class="pos-label">${esc(t('sort.label'))}</span><div class="seg small">` +
-      ['score', 'share'].map((s) => `<button class="${state.sort === s ? 'active' : ''}" data-sort="${s}" aria-pressed="${state.sort === s}">${esc(t('sort.' + s))}</button>`).join('') +
-      '</div>' : '');
+    '</div>';
+}
+
+function renderPresets() {
+  $('#presets').innerHTML = Object.keys(PRESETS).map((k) =>
+    `<button class="chip ${presetActive(k) ? 'active' : ''}" data-preset="${k}" title="${esc(t('preset.' + k + '.title'))}" aria-pressed="${presetActive(k)}">${esc(t('preset.' + k))}</button>`).join('');
+  const n = optsChanged();
+  const cnt = $('#opts-count');
+  cnt.hidden = !n;
+  cnt.textContent = n;
+  const btn = $('#btn-opts');
+  btn.classList.toggle('open', state.optsOpen);
+  btn.setAttribute('aria-expanded', state.optsOpen);
+}
+
+// segmented control bound to an option: data-opt = option name, data-v = value
+function optSeg(key, values, label, disabled = () => false) {
+  return `<div class="seg small wrap" role="group">${values.map((v) => {
+    const cur = state.opts[key] === v;
+    return `<button class="${cur ? 'active' : ''}" data-opt="${key}" data-v="${v}" aria-pressed="${cur}" ${disabled(v) ? 'disabled' : ''}>${esc(label(v))}</button>`;
+  }).join('')}</div>`;
+}
+const optToggle = (key) =>
+  `<button class="toggle ${state.opts[key] ? 'on' : ''}" data-toggle="${key}" aria-pressed="${state.opts[key]}"><i aria-hidden="true"></i>${esc(t('opts.' + key))}</button>`;
+
+function renderOpts() {
+  const panel = $('#opts');
+  panel.hidden = !state.optsOpen;
+  if (!state.optsOpen) return;
+  const o = state.opts, P = targetPos(), res = state.results;
+  const ml = (m) => t('metric.' + m);
+  const off = (m) => !metricOk(m, P, res);
+  const sortKey = metricOk(o.sort, P, res) ? o.sort : 'total';
+  const thenKey = o.then && o.then !== sortKey && metricOk(o.then, P, res) ? o.then : '';
+  const hint = thenKey ? t('opts.hint.then', { n: o.topN, a: ml(sortKey), b: ml(thenKey) }) : t('opts.hint.single', { a: ml(sortKey) });
+  const slider = (k) => {
+    const posOnly = (k === 'lane' || k === 'meta') && !P;
+    return `<label class="wslider ${posOnly ? 'idle' : ''}" title="${esc(t('metric.' + k + '.title'))}">
+      <span>${esc(ml(k))}</span>
+      <input type="range" min="0" max="3" step="0.25" value="${o.w[k]}" data-w="${k}">
+      <output>×${o.w[k].toFixed(2)}</output></label>`;
+  };
+  const roles = ROLE_KEYS.map((k) =>
+    `<button class="chip ${state.roles.has(k) ? 'active' : ''}" data-role="${k}" aria-pressed="${state.roles.has(k)}">${esc(t('role.' + k))}</button>`).join('');
+  const attrs = ATTRS.map((a) =>
+    `<button class="chip ${state.attr === a.k ? 'active' : ''}" data-attr="${a.k}" aria-pressed="${state.attr === a.k}"><span class="dot" style="background:${a.color}"></span>${esc(t('attr.' + a.k))}</button>`).join('');
+  const row = (label, body, title = '') => `<div class="opt-row"${title ? ` title="${esc(title)}"` : ''}><span class="opt-label">${esc(label)}</span>${body}</div>`;
+
+  panel.innerHTML = `
+    <div class="opt-group wide">
+      <div class="opt-title">${esc(t('opts.sort'))}</div>
+      ${row(t('opts.sort.by'), optSeg('sort', METRICS, ml, off))}
+      ${row(t('opts.then'), optSeg('then', ['', ...METRICS], (m) => (m ? ml(m) : t('opts.then.none')), (m) => m && (m === sortKey || off(m))))}
+      ${thenKey ? row(t('opts.top'), optSeg('topN', [5, 10, 15, 20, 30], String)) : ''}
+      <p class="opt-hint">${esc(hint)}</p>
+    </div>
+    <div class="opt-group">
+      <div class="opt-title">${esc(t('opts.weights'))}</div>
+      <div class="wsliders">${WEIGHTS.map(slider).join('')}</div>
+      <p class="opt-hint">${esc(t(P ? 'opts.weights.hint' : 'opts.weights.hint.any'))}</p>
+    </div>
+    <div class="opt-group">
+      <div class="opt-title">${esc(t('opts.filters'))}</div>
+      ${row(t('opts.atk'), optSeg('atk', ['', 'melee', 'ranged'], (v) => (v ? t('atk.' + v) : t('opts.any'))))}
+      ${P ? row(t('opts.minShare'), optSeg('minShare', [0.1, 0.2, 0.35, 0.5], (v) => '≥ ' + Math.round(v * 100) + '%'), t('opts.minShare.title', { p: P })) : ''}
+      ${row(t('opts.pop'), optSeg('pop', [0, 0.25, 0.5, 0.75], (v) => t('opts.pop.' + Math.round(v * 100))), t('opts.pop.title'))}
+      ${res ? row(t('opts.hard'), optSeg('hard', [0, 3, 2, 1], (v) => (v ? t('opts.hard.n', { n: v }) : t('opts.off'))), t('opts.hard.title')) : ''}
+      <div class="opt-row toggles">${metricOk('lane', P, res) ? optToggle('laneOk') : ''}${optToggle('metaOk')}</div>
+    </div>
+    <div class="opt-group wide">
+      <div class="opt-title">${esc(t('opts.roles'))}</div>
+      <div class="chips">${roles}</div>
+      <div class="chips">${attrs}</div>
+    </div>
+    <div class="opt-foot"><button class="clear-btn" data-reset ${optsChanged() ? '' : 'disabled'}>${esc(t('opts.reset'))}</button></div>`;
 }
 
 function renderPicksSkeleton() {
   $('#picks-body').innerHTML = Array.from({ length: 8 }, () =>
-    '<div class="pick skeleton"><span></span><div class="sk sk-img"></div><div><div class="sk sk-line"></div><div class="sk sk-line short"></div></div><div class="sk sk-score"></div></div>').join('');
+    '<div class="pick skeleton"><div class="sk sk-img"></div><div><div class="sk sk-line"></div><div class="sk sk-line short"></div></div><div class="sk sk-score"></div></div>').join('');
 }
 
 function renderPicks() {
   renderPosFilter();
-  renderRoleFilter();
+  renderPresets();
+  renderOpts();
+  renderPicksList();
+}
+
+function renderPicksList() {
   const body = $('#picks-body');
   const res = state.results;
   const P = targetPos();
+  const o = state.opts;
   if (!res && !P) {
     body.innerHTML = `<div class="empty-state">
       <div class="empty-icon" aria-hidden="true">⚔</div>
@@ -653,71 +910,119 @@ function renderPicks() {
   }
 
   const busy = taken();
+  const comp = teamComp();
   let list = state.heroes.filter((h) => !busy.has(h.key));
-  if (P) list = list.filter((h) => posShares(h.key)[P] >= MIN_POS_SHARE);
+  if (P) list = list.filter((h) => posShares(h.key)[P] >= o.minShare);
+  const parts = new Map(list.map((h) => [h.key, scoreParts(h.key, P, comp)]));
+  const pp = (h) => parts.get(h.key);
+  // popularity: cut the rarest share of the candidates (scale-free — sources count games very differently)
+  if (o.pop) {
+    const g = list.map((h) => pp(h).games).sort((a, b) => a - b);
+    const min = g[Math.floor(g.length * o.pop)] || 0;
+    list = list.filter((h) => pp(h).games >= min);
+  }
   if (state.roles.size) list = list.filter((h) => [...state.roles].every((r) => h.roles.includes(r)));
   if (state.attr) list = list.filter((h) => h.attr === state.attr);
-  // score = counter-pick (when enemies are picked) + position meta (when a position is chosen)
-  const parts = new Map(list.map((h) => {
-    const counter = res ? scoreFor(h.key, P) : 0;
-    const meta = posMeta(h.key, P);
-    const metaPts = meta ? META_WEIGHT * meta.delta : 0;
-    return [h.key, { counter, meta, metaPts, total: counter + metaPts }];
-  }));
-  const sortKey = (h) => (P && state.sort === 'share' ? posShares(h.key)[P] : parts.get(h.key).total);
-  list.sort((a, b) => (state.tab === 'best' ? 1 : -1) * (sortKey(b) - sortKey(a)) || parts.get(b.key).total - parts.get(a.key).total);
-
-  const limit = state.showAll ? list.length : 25;
-  const max = Math.max(1, ...list.map((h) => Math.abs(parts.get(h.key).total)));
+  if (o.atk) list = list.filter((h) => h.atk === o.atk);
+  if (res && o.hard) list = list.filter((h) => pp(h).safe == null || pp(h).safe > -o.hard);
+  if (o.laneOk && metricOk('lane', P, res)) list = list.filter((h) => pp(h).lane >= 0);
+  if (o.metaOk) list = list.filter((h) => !pp(h).meta || pp(h).meta.wr >= 50);
 
   if (!list.length) {
     body.innerHTML = `<div class="empty-state"><p>${esc(t('picks.none'))}</p></div>`;
     return;
   }
 
-  const head = !res
-    ? `<div class="picks-note">${esc(t('note.meta', { p: P, role: posName(P) }))}</div>`
-    : P ? `<div class="picks-note">${esc(t('note.pos', { p: P, w: META_WEIGHT }))}</div>` : '';
+  // sort by one metric; optionally take its top N and re-sort them by a second one
+  const sortKey = metricOk(o.sort, P, res) ? o.sort : 'total';
+  const thenKey = o.then && o.then !== sortKey && metricOk(o.then, P, res) ? o.then : '';
+  const dir = state.tab === 'best' ? 1 : -1;
+  const by = (m) => (a, b) => {
+    const va = metricVal(m, pp(a)), vb = metricVal(m, pp(b));
+    if (va == null || vb == null) return (va == null) - (vb == null);
+    return dir * (vb - va) || pp(b).total - pp(a).total;
+  };
+  list.sort(by(sortKey));
+  let head = list, rest = [];
+  if (thenKey) {
+    head = list.slice(0, o.topN).sort(by(thenKey));
+    rest = list.slice(o.topN);
+  }
 
-  patchHTML(body, head + list.slice(0, limit).map((h, i) => {
-    const r = res && res.get(h.key);
-    const p = parts.get(h.key);
-    const s = p.total;
-    const sub = P ? t('pick.share', { p: P, s: Math.round(posShares(h.key)[P] * 100) }) : h.roles.slice(0, 3).map((x) => t('role.' + x)).join(' · ');
-    const vs = r ? r.vs.map((v) => {
-      const e = hero(v.key);
-      const lane = enemyWeight(v.key, P) > 1;
-      const title = v.adv === null ? t('vs.nodata', { name: e.name })
-        : `${e.name}: ${fmt(v.adv)}%` + (v.wr != null ? t('vs.wr', { wr: v.wr.toFixed(1) }) : '') +
-          (v.games ? t('vs.games', { n: v.games.toLocaleString(LANG) }) : '') + (lane ? t('vs.lane') : '');
-      return `<span class="vs ${lane ? 'lane' : ''}" title="${esc(title)}"><img src="${e.icon || e.img}" alt=""><span class="${v.adv === null ? 'flat' : sign(v.adv)}">${v.adv === null ? '—' : fmt(v.adv)}</span></span>`;
-    }).join('') : '';
-    // why the hero is here: counter-pick and meta separately
-    // (only with a position — otherwise the big number on the right already is the counter-pick)
-    const why = !P ? '' : [
-      res ? `<span class="why ${sign(p.counter)}" title="${esc(t('why.counter.title'))}">${esc(t('why.counter', { v: fmt(p.counter) }))}</span>` : '',
-      p.meta ? `<span class="why ${sign(p.metaPts)}" title="${esc(t('why.meta.title', { p: P, wr: p.meta.wr.toFixed(1) }))}">${esc(t('why.meta', { v: fmt(p.metaPts), wr: p.meta.wr.toFixed(1) }))}</span>` : '',
-    ].filter(Boolean).join('');
-    const pct = Math.round((Math.abs(s) / max) * 100);
-    const color = s >= 0 ? 'var(--good)' : 'var(--bad)';
-    const title = P ? t('pick.title.pos', { p: P }) : t('pick.title');
-    return `<div class="pick" data-pick="${h.key}" title="${esc(title)}" role="button" tabindex="0">
-      <span class="pick-rank">${i + 1}</span>
-      <img class="pick-img" src="${h.img}" alt="" loading="lazy">
+  const note = !res ? t('note.meta', { p: P, role: posName(P) }) : P ? t('note.pos', { p: P, s: Math.round(o.minShare * 100) }) : '';
+  const lack = comp.melee - comp.ranged >= 2 ? 'ranged' : comp.ranged - comp.melee >= 2 ? 'melee' : null;
+  const compNote = comp.melee + comp.ranged
+    ? `<div class="picks-note comp-note"><span class="comp-bar" aria-hidden="true">${
+      state.ally.filter(Boolean).map((k) => `<i class="${atkOf(k) || ''}"></i>`).join('')}</span>${
+      esc(t('note.comp', { m: comp.melee, r: comp.ranged }))}${lack && o.w.comp ? ` <b>${esc(t('note.comp.need.' + lack))}</b>` : ''}</div>`
+    : '';
+  const order = thenKey
+    ? `<div class="picks-order">${esc(t('opts.hint.then', { n: o.topN, a: t('metric.' + sortKey), b: t('metric.' + thenKey) }))}</div>` : '';
+
+  const limit = state.showAll ? list.length : Math.max(25, head.length);
+  const shown = [...head.map((h) => [h, thenKey || sortKey]), ...rest.map((h) => [h, sortKey])].slice(0, limit);
+  const maxOf = (m) => Math.max(1e-9, ...shown.filter(([, k]) => k === m).map(([h]) => Math.abs(metricVal(m, pp(h)) || 0)));
+  const max = { [sortKey]: maxOf(sortKey) };
+  if (thenKey) max[thenKey] = maxOf(thenKey);
+
+  const cards = shown.map(([h, key], i) => {
+    const card = pickCard(h, i, pp(h), key, max[key], P, res, comp);
+    return thenKey && i === head.length
+      ? `<div class="picks-divider"><span>${esc(t('picks.rest', { a: t('metric.' + sortKey) }))}</span></div>` + card : card;
+  }).join('');
+  patchHTML(body, (note ? `<div class="picks-note">${esc(note)}</div>` : '') + compNote + order + cards + (list.length > shown.length
+    ? `<button class="btn ghost more" id="show-all">${esc(t('showall', { n: list.length }))}</button>` : ''));
+}
+
+function pickCard(h, i, p, key, max, P, res, comp) {
+  const r = res && res.get(h.key);
+  const sub = P ? t('pick.share', { p: P, s: Math.round(posShares(h.key)[P] * 100) }) : h.roles.slice(0, 3).map((x) => t('role.' + x)).join(' · ');
+  const atk = h.atk ? `<span class="atk ${h.atk}">${esc(t('atk.' + h.atk))}</span>` : '';
+  const vs = r ? r.vs.map((v) => {
+    const e = hero(v.key);
+    const lane = isLaneFoe(v.key, P);
+    const title = v.adv === null ? t('vs.nodata', { name: e.name })
+      : `${e.name}: ${fmt(v.adv)}%` + (v.wr != null ? t('vs.wr', { wr: v.wr.toFixed(1) }) : '') +
+        (v.games ? t('vs.games', { n: v.games.toLocaleString(LANG) }) : '') + (lane ? t('vs.lane') : '');
+    return `<span class="vs ${lane ? 'lane' : ''}" title="${esc(title)}"><img src="${e.icon || e.img}" alt="">${lane ? `<em>${esc(t('vs.lane.short'))}</em>` : ''}<span class="${v.adv === null ? 'flat' : sign(v.adv)}">${v.adv === null ? '—' : fmt(v.adv)}</span></span>`;
+  }).join('') : '';
+  // what the hero's place is made of; the chip of the metric it is ranked by is highlighted
+  const chip = (m, cls, text, title) => `<span class="why ${cls}${m === key ? ' key' : ''}" title="${esc(title)}">${esc(text)}</span>`;
+  const why = [
+    res ? chip('counter', sign(p.counter), t('why.counter', { v: fmt(p.counter) }), t('why.counter.title')) : '',
+    p.laneN ? chip('lane', sign(p.lane), t('why.lane', { v: fmt(p.lane) }), t('why.lane.title')) : '',
+    P && p.meta ? chip('meta', sign(p.metaPts), t('why.meta', { v: fmt(p.metaPts), wr: p.meta.wr.toFixed(1) }), t('why.meta.title', { p: P, wr: p.meta.wr.toFixed(1) }))
+      : !P && p.meta && key === 'meta' ? chip('meta', sign(p.meta.delta), t('why.herowr', { wr: p.meta.wr.toFixed(1) }), t('why.herowr.title')) : '',
+    p.compPts ? chip('comp', sign(p.compPts), t('why.comp', { v: fmt(p.compPts) }), t('why.comp.title', { m: comp.melee, r: comp.ranged })) : '',
+    key === 'safe' && p.safe != null ? chip('safe', sign(p.safe), t('why.safe', { v: fmt(p.safe) }), t('metric.safe.title')) : '',
+    p.games ? chip('games', 'plain', t('why.games', { n: compact(p.games) }), P ? t('why.games.title.pos', { p: P }) : t('why.games.title')) : '',
+  ].filter(Boolean).join('');
+  const v = metricVal(key, p);
+  const signed = !['games', 'share', 'wr', 'meta'].includes(key);
+  const pct = v == null ? 0 : key === 'wr' || key === 'meta' && !signed
+    ? Math.round(Math.max(0, Math.min(1, ((key === 'wr' ? v : p.meta.wr) - 44) / 12)) * 100)
+    : Math.round((Math.abs(v) / max) * 100);
+  const neg = v != null && (signed ? v < 0 : key === 'wr' ? v < 50 : key === 'meta' ? p.meta.wr < 50 : false);
+  const title = P ? t('pick.title.pos', { p: P }) : t('pick.title');
+  const top = state.tab === 'best' && i < 3 && !neg ? ' top' : '';
+  return `<div class="pick${top} ${neg ? 'neg-score' : 'pos-score'}" data-pick="${h.key}" title="${esc(title)}" role="button" tabindex="0">
+      <div class="pick-art">
+        <img class="pick-img" src="${h.img}" alt="" loading="lazy">
+        <span class="pick-rank">${i + 1}</span>
+      </div>
       <div class="pick-main">
-        <div class="pick-name">${esc(h.name)}<small>${esc(sub)}</small></div>
+        <div class="pick-name"><span>${esc(h.name)}</span>${atk}</div>
+        <div class="pick-sub">${esc(sub)}</div>
         ${why ? `<div class="pick-why">${why}</div>` : ''}
         ${vs ? `<div class="pick-vs">${vs}</div>` : ''}
       </div>
       <div class="pick-score">
-        <b class="${sign(s)}">${fmt(s)}${res ? '%' : ''}</b>
-        <small>${r && r.wr != null ? esc(t('pick.wr', { wr: r.wr.toFixed(1) })) : ''}</small>
-        <div class="bar"><span style="width:${pct}%;background:${color}"></span></div>
+        <b class="${metricSign(key, p)}">${metricText(key, p, res)}</b>
+        <small>${esc(key === 'total' && r && r.wr != null ? t('pick.wr', { wr: r.wr.toFixed(1) }) : t('metric.' + key))}</small>
+        <div class="bar"><span style="width:${pct}%"></span></div>
+        <span class="pick-add" aria-hidden="true">+ ${esc(t('pick.add'))}</span>
       </div>
-      <span class="pick-add" aria-hidden="true">+ ${esc(t('pick.add'))}</span>
     </div>`;
-  }).join('') + (list.length > limit
-    ? `<button class="btn ghost more" id="show-all">${esc(t('showall', { n: list.length }))}</button>` : ''));
 }
 
 function renderSource() {
@@ -758,6 +1063,7 @@ function setLang(lang) {
   saveLang(lang);
   applyI18n();
   renderLang();
+  renderSide();
   renderSource();
   renderAll();
 }
@@ -850,7 +1156,8 @@ function bind() {
     const slot = ev.target.closest('.slot.empty');
     if (slot) { setMode(slot.dataset.side); search.focus(); return; }
     const clr = ev.target.closest('[data-clear]');
-    if (clr) clearSide(clr.dataset.clear);
+    if (clr) { clearSide(clr.dataset.clear); return; }
+    if (ev.target.closest('[data-swap]')) swapSides();
   });
 
   $('#jump-builds').addEventListener('click', () => $('#builds').scrollIntoView({ behavior: 'smooth', block: 'start' }));
@@ -867,12 +1174,10 @@ function bind() {
     state.showAll = false;
     $$('#picks-tab button').forEach((x) => { x.classList.toggle('active', x === b); x.setAttribute('aria-pressed', x === b); });
     renderPicks();
-    $('#picks-body').scrollTop = 0;
+    $('#picks-scroll').scrollTop = 0;
   });
 
   $('#pos-filter').addEventListener('click', (ev) => {
-    const s = ev.target.closest('[data-sort]');
-    if (s) { state.sort = s.dataset.sort; state.showAll = false; renderPicks(); return; }
     const b = ev.target.closest('[data-pickpos]');
     if (!b) return;
     state.pickPos = +b.dataset.pickpos;
@@ -881,15 +1186,59 @@ function bind() {
     renderPicks();
   });
 
-  $('#role-filter').addEventListener('click', (ev) => {
-    const b = ev.target.closest('.chip');
-    if (!b) return;
-    if (b.dataset.role) {
-      if (state.roles.has(b.dataset.role)) state.roles.delete(b.dataset.role); else state.roles.add(b.dataset.role);
-    } else {
-      state.attr = state.attr === b.dataset.attr ? null : b.dataset.attr;
-    }
+  const optsChangedNow = () => {
+    saveOpts();
+    state.showAll = false;
     renderPicks();
+    renderPool();
+  };
+  $('#btn-opts').addEventListener('click', () => {
+    state.optsOpen = !state.optsOpen;
+    store.set('dbcp_opts_open', state.optsOpen);
+    renderPresets();
+    renderOpts();
+  });
+  $('#presets').addEventListener('click', (ev) => {
+    const b = ev.target.closest('[data-preset]');
+    if (!b) return;
+    applyPreset(b.dataset.preset);
+    optsChangedNow();
+  });
+  const opts = $('#opts');
+  opts.addEventListener('click', (ev) => {
+    const b = ev.target.closest('button');
+    if (!b || b.disabled) return;
+    const o = state.opts;
+    if (b.dataset.opt) {
+      const cur = o[b.dataset.opt];
+      o[b.dataset.opt] = typeof OPT_DEFAULTS[b.dataset.opt] === 'number' ? +b.dataset.v : b.dataset.v;
+      if (b.dataset.opt === 'sort' && o.then === o.sort) o.then = '';
+      if (cur === o[b.dataset.opt]) return;
+    } else if (b.dataset.toggle) {
+      o[b.dataset.toggle] = !o[b.dataset.toggle];
+    } else if (b.dataset.role) {
+      if (state.roles.has(b.dataset.role)) state.roles.delete(b.dataset.role); else state.roles.add(b.dataset.role);
+    } else if (b.dataset.attr) {
+      state.attr = state.attr === b.dataset.attr ? null : b.dataset.attr;
+    } else if ('reset' in b.dataset) {
+      state.opts = { ...OPT_DEFAULTS, w: { ...OPT_DEFAULTS.w } };
+      state.roles.clear();
+      state.attr = null;
+    } else return;
+    optsChangedNow();
+  });
+  // weight sliders: update the list live without re-rendering the panel (the slider keeps its drag)
+  opts.addEventListener('input', (ev) => {
+    const k = ev.target.dataset.w;
+    if (!k) return;
+    state.opts.w[k] = +ev.target.value;
+    ev.target.nextElementSibling.textContent = '×' + state.opts.w[k].toFixed(2);
+    saveOpts();
+    renderPresets();
+    renderPicksList();
+    renderPool();
+    const reset = $('[data-reset]', opts);
+    if (reset) reset.disabled = !optsChanged();
   });
 
   const pickHero = (key) => {
@@ -1016,7 +1365,7 @@ function ensureHeroesFromDotabuff() {
   for (const [key, h] of Object.entries(d.heroes)) {
     if (state.byKey.has(key)) continue;
     if (haveMeta) { console.warn('[Skalse] Dotabuff hero not found in OpenDota:', h.name, key); continue; }
-    const entry = { key, id: null, name: h.name, attr: 'all', roles: [], img: h.img || '', icon: h.img || '', wr: 50 };
+    const entry = { key, id: null, name: h.name, attr: 'all', roles: [], atk: null, img: h.img || '', icon: h.img || '', wr: 50 };
     state.heroes.push(entry);
     state.byKey.set(key, entry);
   }
@@ -1025,8 +1374,12 @@ function ensureHeroesFromDotabuff() {
 /* ===================== start ===================== */
 
 async function init() {
+  state.opts = loadOpts();
+  state.optsOpen = !!store.get('dbcp_opts_open');
+  state.side = store.get('dbcp_side') === 'radiant' ? 'radiant' : 'dire';
   applyI18n();
   renderLang();
+  renderSide();
   bind();
   renderPicksSkeleton();
   const [meta] = await Promise.allSettled([loadHeroMeta(), loadDataScript('data.js'), loadDataScript('stratz.js')]);
@@ -1060,6 +1413,7 @@ async function init() {
   if (saved && saved !== state.source && order.includes(saved) && state[saved]) toast(t('toast.od.stale'));
 
   readHash();
+  renderSide();
   autoAssign('ally');
   autoAssign('enemy');
   if (!state.enemy.includes(null)) setMode('ally'); // a shared link with a full enemy team
