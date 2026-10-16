@@ -1,11 +1,9 @@
-name: Update data & deploy
+name: Update data
 
 on:
   schedule:
     - cron: '17 */6 * * *' # every 6 hours
   workflow_dispatch:        # "Run workflow" button in the Actions tab
-  push:
-    branches: [main]        # site changes are published right away (no data collection)
 
 concurrency:
   group: pages
@@ -13,7 +11,6 @@ concurrency:
 
 jobs:
   update:
-    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 360 # GitHub-hosted maximum
     permissions:
@@ -62,27 +59,3 @@ jobs:
             git pull --rebase
             git push
           fi
-
-  deploy:
-    needs: update
-    # publish even if collection failed — the site keeps the last good data
-    if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
-    permissions:
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.ref_name }}   # the fresh commit with the new data.js
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: .
-      - id: deployment
-        uses: actions/deploy-pages@v4
-        with:
-          timeout: 1800000
